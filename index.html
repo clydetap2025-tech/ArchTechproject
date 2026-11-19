@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Погода внутри — дневник атмосферы дня</title>
+  <meta name="description" content="Личный дневник, который превращает текст, фото и песню дня в живое воспоминание.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=JetBrains+Mono:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23efe8dc'/%3E%3Ccircle cx='32' cy='32' r='20' fill='none' stroke='%231d1a17' stroke-width='3'/%3E%3Cpath d='M32 18a14 14 0 0 1 14 14' fill='none' stroke='%23b5432b' stroke-width='6'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%231d1a17'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip" href="#view">К содержимому</a>
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="Погода внутри — к архиву">
+      <svg class="brand-seal" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 8a12 12 0 0 1 12 12" fill="none" stroke="#b5432b" stroke-width="4"/><path d="M32 20a12 12 0 0 1-12 12" fill="none" stroke="currentColor" stroke-width="4" opacity=".6"/><circle cx="20" cy="20" r="4" fill="currentColor"/></svg>
+      <span><b>Погода внутри</b><small>дневник атмосферы дня</small></span>
+    </a>
+    <nav class="nav" aria-label="Основная навигация">
+      <a href="#/" data-nav>Архив</a>
+      <a href="#/new" data-nav class="nav-cta">Записать день</a>
+      <button id="settings-btn" class="icon-btn" type="button" aria-label="Настройки" title="Настройки">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </button>
+    </nav>
+  </header>
+  <main id="view" tabindex="-1"><p class="wrap muted">Открываю дневник…</p></main>
+  <div id="toast" class="toasts" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

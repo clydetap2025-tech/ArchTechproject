@@ -1,0 +1,10 @@
+# локальные настройки и служебное
+.claude/
+.vercel/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# выгрузки из приложения
+*.zip
+*.webm
