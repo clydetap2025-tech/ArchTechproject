@@ -3,32 +3,43 @@
 // (technique, temperature, title), MUSIC gives time and motion (rhythm, pulse, transitions, texture).
 import { clamp, rgbToHsl, hslToRgb, hueLerp, lum, hsl, colorName, TIME_RU, plural } from './util.js';
 import { aggregatePhotos } from './photo.js';
-import { eraOf } from './music.js';
 import { AMBIENT_RU } from './lexicon.js';
 
 export const TECH = {
-  monet: { name: 'Импрессионизм', ref: 'Клод Моне', when: 'спокойный тёплый день, природа, мягкий свет', why: 'мазки вместо контуров: в хорошем воспоминании свет важнее деталей', trans: 'dissolve' },
-  kandinsky: { name: 'Конструктивизм', ref: 'Василий Кандинский', when: 'напряжение, скорость, город, дедлайн', why: 'острые углы и жёсткая сетка дают напряжение; Кандинский строил «Композиции» как музыку', trans: 'cut' },
-  matisse: { name: 'Вырезки', ref: 'Анри Матисс', when: 'радость, движение, друзья, праздник', why: 'плоский чистый цвет без полутонов — радость без оговорок; формы пляшут на сильную долю', trans: 'slide' },
-  hopper: { name: 'Тишина', ref: 'Эдвард Хоппер, Вильгельм Хаммерсхёй', when: 'вечер, одиночество, дом или пустой город', why: 'пустое пространство и свет из окна: одиночество без драмы', trans: 'fade' },
-  ma: { name: 'Ма', ref: 'японский минимализм, суми-э', when: 'созерцание, раннее утро, тишина, мало событий', why: 'пауза как содержание: много бумаги, тушь и один кадр', trans: 'ink' },
-  film: { name: 'Плёнка', ref: 'домашний фотоархив, Polaroid', when: 'ностальгия, семья, старая песня', why: 'зерно, засветки и штамп даты — культурный код воспоминания', trans: 'burn' },
+  monet: { name: 'Импрессионизм', ref: 'Пейзаж и свет', why: 'просторный верхний кадр и мягко скруглённые углы' },
+  kandinsky: { name: 'Конструктивизм', ref: 'Городская фотосетка', why: 'строгие рамки, асимметричная нижняя пара и короткий переход' },
+  matisse: { name: 'Вырезки', ref: 'Цветовой фотоколлаж', why: 'смещённая линия стыка в нижней паре и живой ритм кадров' },
+  hopper: { name: 'Тишина', ref: 'Окна и вечерний свет', why: 'один большой кадр, чуть смещённая нижняя пара и спокойный переход' },
+  ma: { name: 'Ма', ref: 'Японский минимализм', why: 'большой главный кадр и равные по ширине дополнительные снимки' },
+  film: { name: 'Плёнка', ref: 'Домашний фотоархив', why: 'главный снимок с двумя деталями и дата в шапке страницы' },
 };
 export const TECH_ORDER = ['monet', 'kandinsky', 'matisse', 'hopper', 'ma', 'film'];
 
-const TRANS_RU = { dissolve: 'мягкое растворение', cut: 'резкая склейка в долю', slide: 'сдвиг, как вырезанный лист', fade: 'медленное затемнение', ink: 'растекание туши', burn: 'плёночная вспышка' };
-const TRANS_DUR = { dissolve: 1.8, cut: 0.14, slide: 0.55, fade: 2.2, ink: 1.9, burn: 0.9 };
 const LIGHT_DESC = {
-  morning: 'низкое солнце слева, свежий светлый тон',
+  morning: 'свежий светлый тон',
   day: 'ровный дневной свет',
-  evening: 'тёплый низкий свет справа, длинные тени',
+  evening: 'тёплый вечерний тон',
   night: 'холодный искусственный свет, глубокие тени',
 };
 const TIME_TEMP = { morning: 0.1, day: 0, evening: 0.3, night: -0.35 };
 
-const f2 = x => (Math.round(x * 100) / 100).toFixed(2);
 const pct = x => Math.round(x * 100) + '%';
 const signed = x => (x >= 0 ? '+' : '−') + Math.abs(Math.round(x * 100) / 100).toFixed(2);
+
+function makeTimeline(music, beats, count) {
+  const duration = clamp(music.segDur || 30, 12, 30);
+  const beat = 60 / clamp(music.bpm || 96, 50, 200);
+  const interval = clamp(beats * beat, 2.4, 9);
+  const slots = Math.min(count, Math.max(1, Math.round(duration / interval)));
+  const groups = Math.max(1, slots, Math.ceil(count / 3));
+  const step = Math.max(1, Math.round(duration / groups / beat)) * beat;
+  const cuts = [0];
+  for (let group = 1; group < groups; group++) {
+    const next = (music.beatOffset || 0) + group * step;
+    cuts.push(clamp(next, cuts[group - 1] + 1, duration - (groups - group)));
+  }
+  return { duration, cuts };
+}
 
 export function computeDay(day, override = day.override) {
   const T = day.inputs.text, M = day.inputs.music, meta = day.song?.meta || {}, Wx = day.inputs.weather || null;
@@ -37,7 +48,8 @@ export function computeDay(day, override = day.override) {
   const modeSign = M.mode === 'minor' ? -1 : M.mode === 'major' ? 1 : 0;
   const modeW = modeSign ? clamp(M.keyConf ?? 0.5) : 0;
   const seasonWarm = { summer: 0.6, spring: 0.2, autumn: 0.05, winter: -0.6 }[T.season] ?? 0;
-  const weatherWarm = Wx ? clamp((Wx.tmax - 12) / 25, -1, 1) * 0.5 : 0;
+  const localTemperature = Wx?.tmax ?? Wx?.temperature;
+  const weatherWarm = Number.isFinite(localTemperature) ? clamp((localTemperature - 12) / 25, -1, 1) * 0.5 : 0;
   const photoWarm = clamp(P.warmth * 2.5, -1, 1);
 
   let V = clamp(0.65 * T.valence + 0.2 * modeSign * modeW + 0.15 * (P.lum - 0.5) * 2, -1, 1);
@@ -71,45 +83,13 @@ export function computeDay(day, override = day.override) {
   const w = {}; for (const k of TECH_ORDER) w[k] = ex[k] / sum;
   const ranked = [...TECH_ORDER].sort((a, b) => w[b] - w[a]);
   const primary = ranked[0], secondary = ranked[1];
-  const era = eraOf(meta.year);
-  const vintage = era?.key === 'vintage' ? 1 : era?.key === 'analog' ? 0.6 : 0;
-
-  // ---- continuous style parameters (one shader, blended by weights) ----
+  // ---- photo layout, accent colors and beat-aligned transitions ----
   const st = {};
-  st.paint = clamp(w.monet + w.hopper * 0.35 + w.matisse * 0.35 + w.film * 0.15 + w.ma * 0.2);
-  st.flow = clamp(w.monet + w.ma * 0.3 + w.film * 0.1);
-  st.flowSpeed = 0.35 + E * 1.2;
-  st.edges = clamp(w.kandinsky * 0.9 + w.matisse * 0.25 + w.ma * 0.12);
-  st.poster = clamp(w.kandinsky * 0.75 + w.matisse * 0.9);
-  st.palMap = clamp(w.matisse * 0.8 + w.kandinsky * 0.6 + w.monet * 0.3 + w.hopper * 0.25 + w.ma * 0.2 + w.film * 0.1);
-  st.ink = clamp(w.ma * 0.95);
-  st.levels = clamp(0.15 + w.kandinsky * 0.8 + w.matisse * 0.55 + w.film * 0.2 + w.ma * 0.65);
   st.sat = clamp(0.75 + 0.25 * V + 0.3 * E - 0.5 * w.hopper - 0.55 * w.ma + 0.45 * w.matisse + 0.1 * w.kandinsky, 0.1, 1.6);
-  st.contrast = clamp(0.92 + 0.35 * Tn + 0.15 * E - 0.2 * w.monet + 0.25 * w.hopper + 0.25 * w.kandinsky + 0.25 * w.matisse - 0.1 * w.film, 0.7, 1.6);
   st.temp = clamp(W * 0.7 + TIME_TEMP[light], -1, 1);
-  st.lift = clamp(0.04 + 0.14 * w.film + 0.08 * w.monet + 0.05 * w.ma - 0.04 * Tn - 0.08 * w.matisse, 0, 0.3);
-  st.grain = clamp(0.025 + 0.16 * w.film + 0.05 * w.hopper + 0.04 * w.monet + 0.05 * vintage, 0, 0.25);
-  st.grainSize = 1 + (1 - M.brightness) * 1.4;
-  st.bloom = clamp(0.35 * w.monet + 0.3 * w.film + (light === 'evening' ? 0.12 : 0) + 0.1 * w.matisse);
-  st.leak = clamp(w.film * 0.9 - 0.1);
-  st.vig = clamp(0.15 + 0.35 * w.film + 0.35 * w.hopper + (light === 'night' ? 0.25 : 0));
-  st.shaft = clamp(w.hopper * 0.9 + (light !== 'night' ? 0.15 * w.monet : 0));
-  st.shaftAng = { morning: 0.6, day: 1.2, evening: 2.5, night: 1.9 }[light];
   st.value = (modeSign < 0 ? 0.92 - 0.05 * modeW : 1 + 0.03 * modeSign * modeW) * (light === 'night' ? 0.94 : 1);
-  st.edgeSoft = clamp(w.monet + w.ma * 0.9);
-  st.air = clamp(0.12 + 0.35 * (1 - E) + (modeSign < 0 ? 0.12 : 0) + 0.25 * w.ma + 0.15 * w.hopper - 0.2 * w.matisse);
-  st.motion = 0.25 + E * 0.9;
-  st.pulse = 0.015 + 0.06 * E * clamp(M.pulse ?? 0.5);
-  st.shotBeats = E > 0.72 ? 4 : E > 0.45 ? 8 : 16;
-  st.transition = TECH[primary].trans;
-  st.transDur = TRANS_DUR[st.transition] * (st.transition === 'cut' ? 1 : 1.2 - E * 0.5);
-  st.kbRange = 0.05 + 0.1 * (1 - E);
-  st.tilt = primary === 'film' || primary === 'matisse' ? (1 - Tn) * 0.05 : 0;
-  st.titleWeight = Math.round(clamp(300 + 560 * clamp(0.55 * E + 0.65 * Tn - 0.1), 300, 860));
-  st.titleItalic = (w.film + w.monet * 0.6 + N * 0.4) > 0.55 && Tn < 0.45;
-  st.titleUpper = primary === 'kandinsky';
-  st.tracking = primary === 'kandinsky' ? 0.05 : primary === 'ma' ? 0.02 : 0;
-  st.titleSize = Math.round(74 + 12 * E * (primary === 'kandinsky' ? 1.4 : 1) - 8 * st.air);
+  st.crossfade = primary === 'kandinsky' ? .16 : .46 - .2 * E;
+  st.timeline = makeTimeline(M, E > .72 ? 4 : E > .45 ? 8 : 16, P.n);
 
   // palette: from the photos, shifted by temperature, saturation and the song's mode
   const pal = P.palette.map(c => {
@@ -117,8 +97,7 @@ export function computeDay(day, override = day.override) {
     hh = hueLerp(hh, st.temp >= 0 ? 32 : 218, Math.abs(st.temp) * 0.3);
     return hslToRgb(hh, clamp(s * (0.6 + 0.5 * st.sat) + 0.3 * w.matisse), clamp(l * st.value * (light === 'night' ? 0.88 : 1)));
   }).sort((a, b) => lum(a) - lum(b));
-  // hues come from the photos, the tonal ladder from the system: every palette spans dark → light,
-  // so the gradient map keeps a readable image even for night shots or pale pastels
+  // Hues come from the photos and the tonal ladder keeps the swatches readable.
   const ladder = [0.1, 0.3, 0.5, 0.68, 0.86].map(v => v * (light === 'night' ? 0.88 : 1));
   st.palette = pal.map((c, i) => {
     const [hh, s, l] = rgbToHsl(...c);
@@ -148,8 +127,6 @@ export function computeDay(day, override = day.override) {
     : `насыщенный день → собранный голос, темп ${voice.rate}`;
 
   // ---- recipe: why the page looks like this ----
-  const bp = 60 / (M.bpm || 100);
-  const shotSec = clamp(st.shotBeats * bp, 2.4, 9);
   const recipe = [];
   const add = (src, sig, rule) => recipe.push({ src, sig, rule });
   // name the colours a person would notice: chromatic clusters first, near-black/white only as a fallback
@@ -158,25 +135,22 @@ export function computeDay(day, override = day.override) {
   add('Фото', `${P.n} ${plural(P.n, 'снимок', 'снимка', 'снимков')}, главные цвета — ${colorWords}`,
     `палитра собрана из ваших фото и сдвинута ${st.temp > 0.08 ? 'в тепло' : st.temp < -0.08 ? 'в холод' : 'нейтрально'} (${signed(st.temp)})`);
   add('Фото', P.n === 1 ? 'один кадр' : `${P.n} ${plural(P.n, 'кадр', 'кадра', 'кадров')}`,
-    P.n === 1 ? 'один кадр — медленный наезд на всё воспоминание' : `кадры идут по ритму песни, все успевают прозвучать за 30 секунд`);
+    P.n === 1 ? 'один снимок занимает всю фотозону' : 'крупный снимок дополнен деталями в нижней фотополосе');
   const valWord = V > 0.35 ? 'светлое' : V > 0.08 ? 'скорее светлое' : V > -0.15 ? 'смешанное' : V > -0.4 ? 'приглушённое' : 'тяжёлое';
   const enWord = E > 0.7 ? 'очень живое' : E > 0.5 ? 'живое' : E > 0.32 ? 'спокойное' : 'тихое';
   add('Текст', T.hits?.length ? `«${T.hits.slice(0, 3).join('», «')}»` : 'тон записи',
     `настроение записи: ${valWord}, ${enWord}${Tn > 0.5 ? ', напряжённое' : ''}${overridden ? ' (поправлено вручную)' : ''}`);
   add('Текст', `${TIME_RU[light]}${T.timeExplicit ? '' : ' (по фото)'}`, `свет: ${LIGHT_DESC[light]}`);
   const PLACE_RULE = {
-    nature: 'природа усиливает живописные техники', work: 'работа добавляет геометрию и сетку',
+    nature: 'природа усиливает спокойные раскладки', work: 'работа добавляет геометрию и сетку',
     city: 'город добавляет ритм и геометрию', home: 'интерьер добавляет тишины и пустоты', travel: 'дорога добавляет движения',
   };
   if (T.place) add('Текст', `место: ${T.place.nom}`, PLACE_RULE[kind] || 'место задаёт композицию');
   add('Музыка', M.source === 'audio' ? `${M.bpm} BPM` : `≈${M.bpm} BPM (по жанру)`,
-    `кадр меняется каждые ${st.shotBeats} ${plural(st.shotBeats, 'долю', 'доли', 'долей')} ≈ ${shotSec.toFixed(1)} с; переход — ${TRANS_RU[st.transition]}`);
+    st.timeline.cuts.length > 1 ? `смена фотосцены по долям трека, переход ${st.crossfade.toFixed(2)} с` : 'музыка влияет на мягкое приближение в кадре');
   if (modeSign) add('Музыка', M.key, modeSign < 0
-    ? `минор: −${Math.round((1 - st.value) * 100)}% яркости и больше воздуха (${pct(st.air)})`
-    : `мажор: светлее, композиция плотнее (воздух ${pct(st.air)})`);
-  add('Музыка', `энергия ${pct(M.energy)}`, `пульсация кадра на долю ${(st.pulse * 100).toFixed(1)}%, скорость мазков ×${f2(st.flowSpeed)}`);
-  if (M.source === 'audio') add('Музыка', `тембр ${M.brightness > 0.5 ? 'яркий' : 'глухой'} (${M.centroid} Гц)`, `зерно ${st.grainSize > 1.7 ? 'крупное' : 'мелкое'}, ${M.brightness > 0.5 ? 'края чётче' : 'края мягче'}`);
-  if (era) add('Музыка', `${meta.year}${meta.genre ? ', ' + meta.genre : ''}`, `${era.ru}: ${era.texture}`);
+    ? 'минор немного приглушает акцентную палитру' : 'мажор немного осветляет акцентную палитру');
+  add('Музыка', `энергия ${pct(M.energy)}`, 'энергия влияет на темп и приближение снимков');
   // when signals disagree we don't average them: each keeps its own layer
   const musicUp = M.energy > 0.55 || (modeSign > 0 && modeW > 0.4);
   const musicDown = M.energy < 0.4 && modeSign < 0;
@@ -185,7 +159,8 @@ export function computeDay(day, override = day.override) {
   add('Система', w[secondary] >= 0.05 ? `${TECH[primary].name} ${pct(w[primary])} + ${TECH[secondary].name} ${pct(w[secondary])}` : `${TECH[primary].name} ${pct(w[primary])}`, TECH[primary].why);
   add('Голос', voice.slot === 'A' ? 'мягкий голос' : 'собранный голос', voice.why);
   if (day.meta?.ambient?.length) add('Звук', day.meta.ambient.map(k => AMBIENT_RU[k]).join(' + '), 'тихий фон под песней — из слов вашей записи');
-  if (Wx) add('Погода', `${Wx.city}: ${Wx.text}, ${Math.round(Wx.tmax)}°`, 'реальная погода этого дня в штампе даты и в тепле палитры');
+  if (Wx) add('Погода', [Wx.city, Wx.text, Number.isFinite(localTemperature) ? `${Math.round(localTemperature)}°` : null].filter(Boolean).join(' · '),
+    'погода этого дня влияет на пейзаж и тепло палитры');
 
   return { mood, weights: w, scores, primary, secondary, style: st, recipe, voice, photo: P };
 }
