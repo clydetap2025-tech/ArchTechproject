@@ -429,6 +429,7 @@ function homeStage(items, ...actions) {
   }
   const weather = weatherControl(scene, theme => { automatic = theme; renderSeason(); });
   return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
+    h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Сезон фона' }, buttons),
     h('div', { class: 'landing-intro' },
       h('div', { class: 'landing-heading' },
         h('p', { class: 'label landing-label' }, 'Личный дневник'),
@@ -436,8 +437,7 @@ function homeStage(items, ...actions) {
       h('div', { class: 'landing-detail' },
         h('p', null, 'Фото, слова и песня складываются в живое воспоминание.'),
         h('div', { class: 'landing-actions' }, actions))),
-    h('div', { class: 'landscape-panel' }, h('div', { class: 'landscape-toolbar' }, weather,
-      h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Сезон фона' }, buttons)), memoryGallery(items)));
+    h('div', { class: 'landscape-panel' }, weather, memoryGallery(items)));
 }
 
 function viewEmpty() {
