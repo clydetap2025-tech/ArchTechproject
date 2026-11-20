@@ -1,6 +1,6 @@
 # Фото демо-дней
 
-Все снимки взяты с [Unsplash](https://unsplash.com) по [лицензии Unsplash](https://unsplash.com/license): их можно бесплатно использовать, указание автора не обязательно, но мы его приводим. На снимках нет узнаваемых людей. Файлы уменьшены до 1400 px по длинной стороне.
+Снимки взяты с [Unsplash](https://unsplash.com) по [лицензии Unsplash](https://unsplash.com/license). Авторы и оригиналы перечислены ниже.
 
 | Файл | День | Автор | Оригинал |
 |---|---|---|---|
@@ -22,3 +22,13 @@
 | villagePie.jpg | Осенний вечер в деревне у бабушки | Priscilla Du Preez | https://unsplash.com/photos/HG1pJiQHXzs |
 | movingBoxes.jpg | Вечер дома перед переездом | Alicia Christin Gerald | https://unsplash.com/photos/bV7WI-AeiTA |
 | movingLamp.jpg | Вечер дома перед переездом | Dorien Monnens | https://unsplash.com/photos/UaSpWm8pTOc |
+| winterForest.jpg | Зимняя и снежная сцена | Harri P | https://unsplash.com/photos/L8p9qMMiCWs |
+| autumnBench.jpg | Осенний парк и какао | Dariia Lemesheva | https://unsplash.com/photos/rFb_dh08WVY |
+| autumnTrail.jpg | Осенний парк и какао | Jeffrey Zhang | https://unsplash.com/photos/wGT_QP61GPY |
+| officeSkyline.jpg | Ночь в офисе перед сдачей | Spencer Liao | https://unsplash.com/photos/ALRWH9UhuaU |
+| partyLights.jpg | Летний вечер на крыше в день рождения | Ilya Semenov | https://unsplash.com/photos/J2RuTA2Ouws |
+| rainStreet.jpg | Дождливый вечер дома наедине с собой | Alexander Lunyov | https://unsplash.com/photos/QMtGjQS9Th0 |
+| seaDawn.jpg | Летнее утро у моря | Howard Walsh | https://unsplash.com/photos/lRAaMaAQqL4 |
+| seaTide.jpg | Летнее утро у моря | Rishav Ojha | https://unsplash.com/photos/6hTUImxSkcg |
+| villageGarden.jpg | Осенний вечер в деревне у бабушки | Viktor Smoliak | https://unsplash.com/photos/_B3KITqfq7Y |
+| movingVinyl.jpg | Вечер дома перед переездом | Dmitry Spravko | https://unsplash.com/photos/DIGeBP4UEVk |

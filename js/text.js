@@ -1,5 +1,5 @@
 // Reading the diary entry: mood axes, time, season, place, people, sensory anchors, folder title.
-// Works fully offline (rules + lexicon). Optionally refined by Claude if the user adds an API key.
+// Works offline with a local lexicon and deterministic rules.
 
 import {
   LEX, TIME_STEMS, SEASON_STEMS, WEATHER_STEMS, PLACES, WHO, EVENTS, WEAK_EVENTS, DETAILS,
@@ -217,93 +217,4 @@ export function makeTitle(a, dateISO) {
   if (wordCount(t) < 3 && !parts.adj) { parts.adj = SEASON_ADJ[a.season]?.[parts.g] || null; t = join(parts); }
   if (wordCount(t) < 3) t = `${t} в ${MONTHS_PREP[parseISO(dateISO).getMonth()]}`;
   return capitalize(t);
-}
-
-export function validTitle(t) {
-  const n = wordCount(t || '');
-  return n >= 3 && n <= 7 && !/[«»"]/.test(t);
-}
-
-// ---------- optional: Claude refines the reading ----------
-const AMBIENT_KEYS = Object.keys(AMBIENT_STEMS);
-
-const LLM_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['valence', 'energy', 'warmth', 'tension', 'social', 'nostalgia', 'time_of_day', 'season', 'title', 'caption', 'sensory', 'ambient', 'note'],
-  properties: {
-    valence: { type: 'number', description: 'от -1 (тяжело) до 1 (приятно)' },
-    energy: { type: 'number', description: 'от 0 (спокойно) до 1 (интенсивно)' },
-    warmth: { type: 'number', description: 'от -1 (холодно) до 1 (тепло) — и физически, и по-человечески' },
-    tension: { type: 'number', description: 'от 0 до 1' },
-    social: { type: 'number', description: 'от -1 (один) до 1 (толпа)' },
-    nostalgia: { type: 'number', description: 'от 0 до 1' },
-    time_of_day: { type: 'string', enum: ['morning', 'day', 'evening', 'night', 'unknown'] },
-    season: { type: 'string', enum: ['winter', 'spring', 'summer', 'autumn', 'unknown'] },
-    title: { type: 'string', description: 'название папки дня, 3–7 слов' },
-    caption: { type: 'string', description: 'точная цитата из записи, 2–9 слов' },
-    sensory: { type: 'array', items: { type: 'string' }, description: 'до трёх коротких точных фрагментов записи про цвет, звук, запах, вкус, температуру или свет' },
-    ambient: { type: 'array', items: { type: 'string', enum: AMBIENT_KEYS }, description: 'до двух слоёв тихого фонового звука' },
-    note: { type: 'string', description: 'одно предложение: что главное в атмосфере этого дня' },
-  },
-};
-
-const SYSTEM_PROMPT = `Ты — часть личного дневника «Погода внутри». Он превращает запись о дне, фото и песню в визуальное воспоминание. Твоя задача — прочитать запись (и фото, если они есть) и описать атмосферу ЗАПИСИ. Это не оценка состояния человека и не диагноз.
-
-Названия папок дней пишутся в одном тоне: 3–7 слов, только конкретные образы — время суток, место, люди, предмет или событие. Никогда не называй эмоцию прямо (нельзя «Грустный день», «Счастливый вечер»). Первая буква заглавная, без точки, кавычек и эмодзи.
-Примеры названий: «Осенний парк и какао», «Ночь в офисе перед сдачей», «Дождливый вечер дома наедине с собой», «Летнее утро у моря».
-
-caption и sensory — дословные фрагменты из текста записи, без пересказа.`;
-
-export async function refineWithClaude(text, dateISO, local, apiKey, images = []) {
-  const content = [
-    ...images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } })),
-    { type: 'text', text: `Дата: ${dateISO}\n\nЗапись:\n${text}` },
-  ];
-  const body = {
-    model: 'claude-opus-5-5',
-    max_tokens: 16000,
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: LLM_SCHEMA } },
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content }],
-  };
-  const headers = {
-    'content-type': 'application/json',
-    'x-api-key': apiKey,
-    'anthropic-version': '2026-10-21',
-    'anthropic-dangerous-direct-browser-access': 'true',
-  };
-  // Server-side fallback on refusal; retried without it if the endpoint rejects the beta.
-  let res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { ...headers, 'anthropic-beta': 'server-side-fallback-2026-07-01' },
-    body: JSON.stringify({ ...body, fallbacks: 'default' }),
-  });
-  if (res.status === 400) {
-    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(body) });
-  }
-  if (!res.ok) throw new Error(`Claude API: ${res.status}`);
-  const msg = await res.json();
-  if (msg.stop_reason === 'refusal') throw new Error('Claude отказался анализировать запись');
-  const block = (msg.content || []).find(b => b.type === 'text');
-  if (!block) throw new Error('пустой ответ модели');
-  const j = JSON.parse(block.text);
-
-  const out = { ...local, analyzer: 'claude', note: j.note || '' };
-  out.valence = clamp(+j.valence || 0, -1, 1);
-  out.energy = clamp(+j.energy || 0);
-  out.warmth = clamp(+j.warmth || 0, -1, 1);
-  out.tension = clamp(+j.tension || 0);
-  out.social = clamp(+j.social || 0, -1, 1);
-  out.nostalgia = clamp(+j.nostalgia || 0);
-  if (j.time_of_day && j.time_of_day !== 'unknown') { out.timeOfDay = j.time_of_day; out.timeExplicit = true; }
-  if (j.season && j.season !== 'unknown') out.season = j.season;
-  if (validTitle(j.title)) out.title = capitalize(j.title.trim().replace(/[.!]$/, ''));
-  const inText = s => s && norm(text).includes(norm(s).slice(0, Math.min(12, s.length)));
-  if (inText(j.caption)) out.caption = lowerFirst(trimWords(j.caption.trim(), 9));
-  const sens = (j.sensory || []).filter(inText).slice(0, 3).map(s => lowerFirst(trimWords(s.trim(), 5)));
-  if (sens.length) out.sensory = sens;
-  const amb = (j.ambient || []).filter(k => AMBIENT_KEYS.includes(k)).slice(0, 2);
-  if (amb.length) out.ambient = amb;
-  return out;
 }

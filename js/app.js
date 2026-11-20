@@ -1,7 +1,7 @@
 // App shell: archive, new-day form + pipeline, day viewer (page, sound, voice, "why", mood pad, folder, video).
-import { h, todayISO, fmtDateLong, weekday, clamp, sleep, downloadBlob, uid, blobToBase64, rgbHex, canvasBlob, wordCount, TIME_RU, SEASON_RU, rgbCss } from './util.js';
+import { h, todayISO, fmtDateLong, weekday, clamp, sleep, downloadBlob, uid, rgbHex, canvasBlob, wordCount, TIME_RU, SEASON_RU, rgbCss, plural } from './util.js';
 import { allDays, getDay, putDay, deleteDay, getSetting, setSetting } from './store.js';
-import { analyzeText, refineWithClaude } from './text.js';
+import { analyzeText } from './text.js';
 import { processPhoto } from './photo.js';
 import { parseLink, titleFromLink, searchSong, analyzeSong, loadSongBuffer } from './music.js';
 import { computeDay, TECH, TECH_ORDER } from './mood.js';
@@ -9,12 +9,18 @@ import { PageRenderer, renderCover, drawBackPage, PW, PH } from './page.js';
 import { getSound } from './sound.js';
 import { pickVoice, speak, stopSpeaking } from './voice.js';
 import { saveToFolder, canUseFolders, safeName, zipFiles } from './folder.js';
-import { DEMO_DAYS, loadDemoPhoto } from './demo.js';
+import { DEMO_DAYS, DEMO_VERSION, loadDemoPhoto } from './demo.js';
+import { atmosphere, deviceLocation, fetchWeatherAt, fetchWeatherByCity, weatherLabel } from './weather.js';
+import { memoryGallery, scenery, setScenery } from './gallery.js';
 
 const view = document.getElementById('view');
 // Bump when the visual system changes: archive covers re-render themselves in the background.
-const COVER_VER = 4;
+const COVER_VER = 6;
 let cleanups = [];
+let routeVersion = 0;
+let liveWeather = null;
+let deviceCoordinates = null;
+let checkedWeatherPermission = false;
 const onCleanup = fn => cleanups.push(fn);
 
 // ---------- helpers ----------
@@ -22,10 +28,11 @@ let fontsP = null;
 function fontsReady() {
   if (!fontsP) {
     const sample = 'Аа Яя Ёё 0123';
-    fontsP = Promise.all([
+    const loading = Promise.all([
       '300 40px Literata', '500 40px Literata', '800 40px Literata', 'italic 400 40px Literata', 'italic 700 40px Literata',
-      '500 40px Caveat', '400 24px "JetBrains Mono"', '600 24px "JetBrains Mono"', '700 24px "JetBrains Mono"',
+      '550 40px Manrope', '400 24px "JetBrains Mono"', '600 24px "JetBrains Mono"',
     ].map(f => document.fonts.load(f, sample))).catch(() => {});
+    fontsP = Promise.race([loading, sleep(1500)]);
   }
   return fontsP;
 }
@@ -40,26 +47,39 @@ function toast(msg, kind = '') {
 
 const safeCompute = d => { try { return computeDay(d); } catch (e) { console.warn(e); return null; } };
 
-async function smallB64(blob) {
-  const bmp = await createImageBitmap(blob);
-  const sc = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
-  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  return blobToBase64(await canvasBlob(c, 'image/jpeg', 0.8));
+async function locateWeather(date) {
+  const coordinates = await deviceLocation();
+  const weather = await fetchWeatherAt(coordinates, date);
+  deviceCoordinates = coordinates;
+  if (!date) liveWeather = weather;
+  return weather;
 }
 
-const WMO = c => c === 0 ? 'ясно' : c <= 3 ? 'облачно' : c <= 48 ? 'туман' : c <= 57 ? 'морось' : c <= 67 ? 'дождь' : c <= 77 ? 'снег' : c <= 82 ? 'ливень' : c <= 86 ? 'снегопад' : 'гроза';
-
-async function fetchWeather(city, dateISO) {
-  const g = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=ru`)).json();
-  const loc = g.results?.[0];
-  if (!loc) throw new Error('город не найден');
-  const daysAgo = (Date.parse(todayISO()) - Date.parse(dateISO)) / 86400000;
-  const base = daysAgo > 60 ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
-  const j = await (await fetch(`${base}?latitude=${loc.latitude}&longitude=${loc.longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&start_date=${dateISO}&end_date=${dateISO}`)).json();
-  const code = j.daily?.weather_code?.[0];
-  if (code == null) throw new Error('нет данных');
-  return { city: loc.name, code, text: WMO(code), tmax: j.daily.temperature_2m_max[0], tmin: j.daily.temperature_2m_min[0] };
+function weatherControl(scene) {
+  const description = h('span', { class: 'weather-reading', role: 'status' });
+  const button = h('button', { class: 'weather-action', type: 'button' });
+  const update = () => {
+    const theme = atmosphere(todayISO(), liveWeather);
+    setScenery(scene, theme);
+    description.textContent = liveWeather ? weatherLabel(liveWeather) : SEASON_RU[theme.season];
+    button.textContent = liveWeather ? 'Обновить погоду ↗' : 'Определить по геолокации ↗';
+  };
+  button.onclick = async () => {
+    button.disabled = true;
+    description.textContent = 'Определяю погоду…';
+    try { await locateWeather(); update(); }
+    catch (error) { description.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  update();
+  if (!checkedWeatherPermission) {
+    checkedWeatherPermission = true;
+    navigator.permissions?.query({ name: 'geolocation' }).then(permission => {
+      if (permission.state === 'granted' && button.isConnected && !button.disabled && !liveWeather) button.click();
+    }).catch(() => {});
+  }
+  return h('div', { class: 'weather-widget' }, h('span', { class: 'weather-symbol', 'aria-hidden': 'true' }, '◉'),
+    h('div', null, h('span', { class: 'label' }, 'За окном'), description, button));
 }
 
 // ---------- pipeline ----------
@@ -78,15 +98,8 @@ async function buildDay(input, step = () => {}) {
   step('photos', 'done', `${photos.length} фото`);
 
   step('text', 'active');
-  let ta = analyzeText(input.text, input.date);
-  const key = getSetting('apiKey');
-  if (key) {
-    try {
-      const imgs = getSetting('sendPhotos') === '1' ? await Promise.all(photos.slice(0, 3).map(p => smallB64(p.blob))) : [];
-      ta = await refineWithClaude(input.text, input.date, ta, key, imgs);
-    } catch (e) { console.warn(e); toast('Claude недоступен — сработал локальный разбор текста'); }
-  }
-  step('text', 'done', ta.analyzer === 'claude' ? 'Claude + правила системы' : 'локальные правила');
+  const ta = analyzeText(input.text, input.date);
+  step('text', 'done', 'локальные правила');
 
   step('music', 'active');
   const song = { link: input.songLink || null, query: input.songQuery || null, service: parseLink(input.songLink)?.service || null, meta: null };
@@ -102,24 +115,28 @@ async function buildDay(input, step = () => {}) {
   const music = await analyzeSong(song);
   step('music', 'done', music.source === 'audio' ? `${music.bpm} BPM · ${music.key}` : 'по жанру (превью недоступно)');
 
-  let weather = null;
-  if (input.weatherCity) {
+  let weather = input.weather || null;
+  if (weather) step('weather', 'done', weatherLabel(weather));
+  else if (input.weatherCity) {
     step('weather', 'active');
-    try { weather = await fetchWeather(input.weatherCity, input.date); step('weather', 'done', `${weather.city}: ${weather.text}, ${Math.round(weather.tmax)}°`); }
+    try { weather = await fetchWeatherByCity(input.weatherCity, input.date); step('weather', 'done', weatherLabel(weather)); }
     catch (e) { step('weather', 'done', 'не удалось получить'); }
   } else step('weather', 'skip', 'не добавлена');
 
   step('render', 'active');
   const ambient = [...ta.ambient];
-  if (weather && /дождь|ливень|морось|гроза/.test(weather.text) && !ambient.includes('rain')) ambient.unshift('rain');
-  if (weather && /снег/.test(weather.text) && !ambient.includes('wind')) ambient.push('wind');
+  const theme = atmosphere(input.date, weather, ta);
+  if (theme.motion === 'rain' && !ambient.includes('rain')) ambient.unshift('rain');
+  if (theme.motion === 'snow' && !ambient.includes('wind')) ambient.push('wind');
   const day = {
     id: uid(), created: Date.now(), date: input.date, text: input.text, photos, song,
+    ...(input.demoKey ? { demoKey: input.demoKey, demoVersion: DEMO_VERSION } : {}),
     inputs: { text: ta, music, weather },
-    meta: { title: ta.title, caption: ta.caption, sensory: ta.sensory, ambient: ambient.slice(0, 2), analyzer: ta.analyzer, note: ta.note || '' },
+    meta: { title: ta.title, caption: ta.caption, sensory: ta.sensory, ambient: ambient.slice(0, 2) },
     override: null,
   };
   const comp = computeDay(day);
+  await fontsReady();
   day.cover = await renderCover(day, comp);
   day.coverVer = COVER_VER;
   await putDay(day);
@@ -128,38 +145,101 @@ async function buildDay(input, step = () => {}) {
 }
 
 async function seedDemo(onProgress) {
+  const days = [];
+  const existing = new Map((await allDays()).map(day => [exampleFor(day)?.date, day]));
   for (let i = 0; i < DEMO_DAYS.length; i++) {
     const d = DEMO_DAYS[i];
+    if (existing.has(d.date)) { days.push(await upgradeDemo(existing.get(d.date))); continue; }
     onProgress(i, d);
-    const files = [];
-    for (let k = 0; k < d.photos.length; k++) files.push(await loadDemoPhoto(d.photos[k], 100 + i * 10 + k));
-    await buildDay({ date: d.date, text: d.text, photoFiles: files, songQuery: d.song });
+    const files = await Promise.all(d.photos.map(loadDemoPhoto));
+    days.push(await buildDay({ date: d.date, text: d.text, photoFiles: files, songQuery: d.song, demoKey: d.date }));
   }
+  return days;
+}
+
+function exampleFor(day) {
+  if (day.demoKey) return DEMO_DAYS.find(example => example.date === day.demoKey);
+  return DEMO_DAYS.find(example => example.date === day.date && example.text === day.text && example.song === day.song?.query);
+}
+
+const demoUpgrades = new Map();
+async function upgradeDemo(day) {
+  const example = exampleFor(day);
+  if (!example || day.demoVersion === DEMO_VERSION) return day;
+  if (!demoUpgrades.has(day.id)) {
+    const upgrade = (async () => {
+      const photos = [];
+      for (const name of example.photos) photos.push(await processPhoto(await loadDemoPhoto(name)));
+      const updated = { ...day, photos, demoKey: example.date, demoVersion: DEMO_VERSION };
+      await fontsReady();
+      updated.cover = await renderCover(updated, computeDay(updated));
+      updated.coverVer = COVER_VER;
+      await putDay(updated);
+      return updated;
+    })().catch(error => { console.warn('Не удалось обновить демо', error); return day; })
+      .finally(() => demoUpgrades.delete(day.id));
+    demoUpgrades.set(day.id, upgrade);
+  }
+  return demoUpgrades.get(day.id);
 }
 
 // ---------- router ----------
 async function route() {
+  const version = ++routeVersion;
+  const current = () => version === routeVersion;
   cleanups.forEach(f => { try { f(); } catch { /* */ } });
   cleanups = [];
   window.scrollTo(0, 0);
   const hash = location.hash || '#/';
-  document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === hash));
+  document.querySelectorAll('[data-nav]').forEach(a => {
+    const active = a.getAttribute('href') === hash;
+    a.classList.toggle('is-active', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
   try {
-    if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)));
+    if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
     else if (hash === '#/new') await viewNew();
-    else await viewArchive();
+    else await viewArchive(current);
   } catch (e) {
+    if (!current()) return;
     console.error(e);
     view.replaceChildren(h('section', { class: 'wrap' }, h('h1', { class: 'h1' }, 'Что-то пошло не так'), h('p', { class: 'muted' }, String(e.message || e)), h('a', { class: 'btn', href: '#/' }, 'Вернуться в архив')));
   }
 }
 window.addEventListener('hashchange', route);
+document.querySelector('.skip').addEventListener('click', event => {
+  event.preventDefault();
+  view.focus();
+});
+
+const glassControls = '.btn, .fchip, .gallery-arrow, .nav a, .icon-btn, .weather-action, .thumb-x, button.linklike';
+const glassMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const setGlassSpot = event => {
+  if (glassMotion.matches || !(event.target instanceof Element)) return;
+  const button = event.target.closest(glassControls);
+  if (!button || button.matches(':disabled')) return;
+  const bounds = button.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  button.style.setProperty('--glass-x', `${clamp((event.clientX - bounds.left) / bounds.width) * 100}%`);
+  button.style.setProperty('--glass-y', `${clamp((event.clientY - bounds.top) / bounds.height) * 100}%`);
+};
+document.addEventListener('pointermove', setGlassSpot, { passive: true });
+document.addEventListener('pointerdown', setGlassSpot, { passive: true });
 
 // ---------- archive ----------
-async function viewArchive() {
-  const days = (await allDays()).sort((a, b) => b.date.localeCompare(a.date) || b.created - a.created);
+async function viewArchive(current) {
+  const archived = await allDays();
+  const days = [];
+  for (const day of archived) {
+    if (!current()) return;
+    days.push(await upgradeDemo(day));
+  }
+  if (!current()) return;
+  days.sort((a, b) => b.date.localeCompare(a.date) || b.created - a.created);
   if (!days.length) return viewEmpty();
   await fontsReady();
+  if (!current()) return;
   const urls = [];
   onCleanup(() => urls.forEach(u => URL.revokeObjectURL(u)));
   const comps = new Map(days.map(d => [d.id, safeCompute(d)]));
@@ -177,7 +257,8 @@ async function viewArchive() {
   const imgs = new Map();
   const cards = days.map(d => {
     const c = comps.get(d.id);
-    const url = d.cover ? URL.createObjectURL(d.cover) : '';
+    const cover = d.coverVer === COVER_VER && d.cover ? d.cover : d.photos[0]?.blob;
+    const url = cover ? URL.createObjectURL(cover) : '';
     if (url) urls.push(url);
     const hay = [d.meta.title, d.text, d.song?.meta?.artist, d.song?.meta?.title, d.date, fmtDateLong(d.date), c && TECH[c.primary].name, c && TIME_RU[c.mood.light], SEASON_RU[d.inputs.text.season]].join(' ').toLowerCase();
     const img = h('img', { src: url || null, alt: '', loading: 'lazy' });
@@ -186,7 +267,7 @@ async function viewArchive() {
       h('div', { class: 'card-img' }, img),
       h('div', { class: 'card-body' },
         h('div', { class: 'card-title' }, d.meta.title),
-        h('div', { class: 'card-meta' }, `${fmtDateLong(d.date)}${c ? ' · ' + TECH[c.primary].name : ''}`)));
+        h('div', { class: 'card-meta' }, `${fmtDateLong(d.date)} · ${d.photos.length} фото`)));
     el.dataset.hay = hay;
     return el;
   });
@@ -215,13 +296,34 @@ async function viewArchive() {
   const techChips = chipGroup('tech', 'Фильтр по технике', TECH_ORDER.filter(k => count('tech', k)).map(k => [k, `${TECH[k].name} · ${count('tech', k)}`]));
   const lightChips = chipGroup('light', 'Фильтр по времени суток', ['morning', 'day', 'evening', 'night'].filter(k => count('light', k)).map(k => [k, TIME_RU[k]]));
   const exportBtn = h('button', { class: 'btn', type: 'button', onclick: () => exportForSubmission(exportBtn, days, comps) }, 'Материалы для сдачи');
+  const demoCount = new Set(days.map(d => exampleFor(d)?.date).filter(Boolean)).size;
+  const demoStatus = h('p', { class: 'muted small', role: 'status', hidden: true });
+  const demoBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    demoBtn.disabled = true;
+    demoStatus.hidden = false;
+    try {
+      await seedDemo((index, example) => { demoStatus.textContent = `Загружаю демо: ${fmtDateLong(example.date)}…`; });
+      if (demoStatus.isConnected) route();
+    } catch (error) {
+      console.error(error);
+      demoStatus.textContent = 'Демо не загрузилось. Попробуйте ещё раз.';
+    } finally { demoBtn.disabled = false; }
+  } }, 'Загрузить демо');
 
-  view.replaceChildren(h('section', { class: 'wrap' },
+  const recent = days.slice(0, 9).map(d => {
+    const image = URL.createObjectURL(d.photos[0].blob);
+    urls.push(image);
+    return { title: d.meta.title, date: fmtDateLong(d.date), image, href: `#/day/${d.id}` };
+  });
+  view.replaceChildren(homeStage(recent, h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день ↗')),
+    h('section', { class: 'wrap archive-list' },
     h('div', { class: 'archive-head' },
       h('div', null,
         h('h1', { class: 'h1' }, 'Дневник'),
         h('p', { class: 'muted' }, `${days.length} ${days.length % 10 === 1 && days.length % 100 !== 11 ? 'день' : days.length % 10 >= 2 && days.length % 10 <= 4 && (days.length % 100 < 12 || days.length % 100 > 14) ? 'дня' : 'дней'} · откройте любой, чтобы снова увидеть и услышать его`)),
-      h('div', { class: 'row tight' }, exportBtn, h('a', { class: 'btn primary', href: '#/new' }, 'Записать день'))),
+      h('div', { class: 'row tight' }, demoCount < DEMO_DAYS.length ? demoBtn : null, exportBtn,
+        h('a', { class: 'btn primary', href: '#/new' }, 'Записать день'))),
+    demoStatus,
     h('div', { class: 'label' }, 'Полоса дней — погода внутри по порядку'),
     strip,
     h('div', { class: 'archive-tools' }, search, techChips, lightChips),
@@ -310,29 +412,44 @@ function daysMarkdown(covers) {
   return `# Погода внутри — примеры дней\n\nНазвания папок придуманы прототипом по тексту записи.\n\n| № | Дата | Папка | Техника | Песня | Музыка |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
 }
 
+function homeStage(items, ...actions) {
+  const scene = scenery();
+  return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
+    h('div', { class: 'landing-intro' },
+      h('div', { class: 'landing-heading' },
+        h('p', { class: 'label landing-label' }, 'Личный дневник'),
+        h('h1', { id: 'landing-title' }, 'Дни, которые ', h('em', null, 'остаются.'))),
+      h('div', { class: 'landing-detail' },
+        h('p', null, 'Фото, слова и песня складываются в живое воспоминание.'),
+        h('div', { class: 'landing-actions' }, actions))),
+    h('div', { class: 'landscape-panel' }, weatherControl(scene), memoryGallery(items)));
+}
+
 function viewEmpty() {
+  const titles = ['Осенний парк и какао', 'Ночь перед сдачей', 'Летний вечер на крыше',
+    'Дождливый вечер дома', 'Летнее утро у моря', 'Вечер в деревне', 'Вечер перед переездом'];
   const status = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
-  const demoBtn = h('button', {
-    class: 'btn', onclick: async () => {
-      demoBtn.disabled = true; newBtn.classList.add('is-disabled');
-      try {
-        await seedDemo((i, d) => { status.textContent = `Собираю демо-день ${i + 1} из ${DEMO_DAYS.length}: ${fmtDateLong(d.date)}…`; });
-        toast('Демо-дни готовы');
-        route();
-      } catch (e) { console.error(e); status.textContent = 'Не удалось собрать демо: ' + e.message; demoBtn.disabled = false; }
-    },
-  }, `Показать на ${DEMO_DAYS.length} демо-днях`);
-  const newBtn = h('a', { class: 'btn primary', href: '#/new' }, 'Записать первый день');
-  view.replaceChildren(h('section', { class: 'wrap hero' },
-    h('p', { class: 'label' }, 'ArtTech · Make the Invisible Visible'),
-    h('h1', { class: 'display' }, 'Фото помнят, как выглядел день.', h('br'), h('em', null, 'Этот дневник — как он ощущался.')),
-    h('p', { class: 'lead' }, 'Расскажите, как прошёл день, добавьте фото и песню. Дневник соберёт живую страницу: палитра из ваших снимков, свет и техника — из слов, ритм и движение — из музыки. Каждый день ложится в свою папку с названием.'),
-    h('div', { class: 'row' }, newBtn, demoBtn),
-    status,
-    h('ol', { class: 'how' },
-      h('li', null, h('b', null, 'Фото — материал. '), 'Палитра, свет и композиция берутся из ваших снимков.'),
-      h('li', null, h('b', null, 'Текст — свет и смысл. '), 'Настроение выбирает художественную технику, время суток — свет, детали — заметки на полях.'),
-      h('li', null, h('b', null, 'Музыка — время. '), 'Темп задаёт смену кадров, тональность — яркость и воздух, энергия — пульс страницы.'))));
+  const newBtn = h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день ↗');
+  let busy = false;
+  const openDemo = async index => {
+    if (busy) return;
+    busy = true;
+    demoBtn.disabled = true;
+    try {
+      const days = await seedDemo(i => { status.textContent = `Собираю примеры · ${i + 1} из ${DEMO_DAYS.length}…`; });
+      if (!status.isConnected) return;
+      if (index == null) route();
+      else location.hash = `#/day/${days[index].id}`;
+    } catch (error) {
+      console.error(error);
+      status.textContent = 'Не удалось собрать примеры. Попробуйте ещё раз.';
+    } finally { busy = false; demoBtn.disabled = false; }
+  };
+  const demoBtn = h('button', { class: 'btn big', type: 'button', onclick: () => openDemo() }, 'Загрузить демо');
+  const examples = DEMO_DAYS.map((d, i) => ({
+    title: titles[i], date: fmtDateLong(d.date), image: `demo/photos/${d.photos[0]}.jpg`, action: () => openDemo(i),
+  }));
+  view.replaceChildren(homeStage(examples, newBtn, demoBtn), h('div', { class: 'landing-status' }, status));
 }
 
 // ---------- new day ----------
@@ -378,7 +495,51 @@ async function viewNew() {
   });
   const weatherOn = h('input', { type: 'checkbox', id: 'f-weather' });
   const city = h('input', { type: 'text', id: 'f-city', placeholder: 'Астана', value: getSetting('city', ''), disabled: true });
-  weatherOn.addEventListener('change', () => { city.disabled = !weatherOn.checked; if (weatherOn.checked) city.focus(); });
+  const studioScene = scenery();
+  const sceneCaption = h('p', { class: 'studio-season' });
+  const weatherStatus = h('p', { class: 'hint weather-status', role: 'status' });
+  let dayWeather = null, weatherRequest = 0;
+  const refreshStudio = () => {
+    const theme = atmosphere(date.value || todayISO(), dayWeather);
+    setScenery(studioScene, theme);
+    sceneCaption.textContent = dayWeather ? weatherLabel(dayWeather) : SEASON_RU[theme.season];
+  };
+  const locate = h('button', { class: 'btn', type: 'button' }, 'Определить по геолокации ↗');
+  const clearWeather = () => {
+    weatherRequest++;
+    dayWeather = null;
+    locate.disabled = false;
+    locate.textContent = 'Определить по геолокации ↗';
+    weatherStatus.textContent = '';
+    refreshStudio();
+  };
+  date.addEventListener('change', clearWeather);
+  weatherOn.addEventListener('change', () => {
+    clearWeather();
+    city.disabled = !weatherOn.checked;
+    if (weatherOn.checked) city.focus();
+  });
+  locate.onclick = async () => {
+    const request = ++weatherRequest;
+    const selectedDate = date.value || todayISO();
+    weatherOn.checked = false;
+    city.disabled = true;
+    dayWeather = null;
+    refreshStudio();
+    locate.disabled = true;
+    weatherStatus.textContent = 'Загружаю погоду за выбранную дату…';
+    try {
+      const result = deviceCoordinates ? await fetchWeatherAt(deviceCoordinates, selectedDate) : await locateWeather(selectedDate);
+      if (request !== weatherRequest) return;
+      dayWeather = result;
+      weatherStatus.textContent = `Добавлено · ${weatherLabel(result)}`;
+      locate.textContent = 'Обновить погоду ↗';
+      refreshStudio();
+    } catch (error) {
+      if (request === weatherRequest) weatherStatus.textContent = `${error.message}. Можно указать город.`;
+    } finally { if (request === weatherRequest) locate.disabled = false; }
+  };
+  refreshStudio();
 
   const steps = h('ol', { class: 'steps', 'aria-live': 'polite' });
   const submit = h('button', { class: 'btn primary big', type: 'submit' }, 'Собрать воспоминание');
@@ -387,6 +548,7 @@ async function viewNew() {
     class: 'form', novalidate: true,
     onsubmit: async e => {
       e.preventDefault();
+      if (submit.disabled || locate.disabled) return;
       let ok = true;
       if (wordCount(text.value) < 3) { showErr('text', 'Напишите хотя бы пару предложений о дне — из слов система берёт свет и настроение.'); ok = false; }
       if (!photoFiles.length) { showErr('photos', 'Добавьте хотя бы одно фото этого дня.'); ok = false; }
@@ -402,6 +564,7 @@ async function viewNew() {
           date: date.value || todayISO(), text: text.value.trim(), photoFiles,
           songLink: link.value.trim(), songQuery: query.value.trim(), songFile: songFile.files[0] || null,
           weatherCity: weatherOn.checked ? city.value.trim() : '',
+          weather: dayWeather?.date === (date.value || todayISO()) ? dayWeather : null,
         }, step);
         await sleep(400);
         location.hash = `#/day/${day.id}`;
@@ -424,43 +587,96 @@ async function viewNew() {
       h('label', { for: 'f-query', class: 'sub' }, 'Исполнитель — название'), query,
       h('p', { class: 'hint' }, 'По названию находим официальный 30-секундный фрагмент и слушаем его: темп, тональность, энергию.'),
       h('label', { for: 'f-audio', class: 'sub' }, 'Или свой аудиофайл'), songFile, errEl('song')),
-    h('div', { class: 'field' },
-      h('label', { class: 'check' }, weatherOn, h('span', null, 'Добавить погоду этого дня (Open-Meteo)')),
-      h('label', { for: 'f-city', class: 'sub' }, 'Город'), city),
+    h('fieldset', { class: 'field weather-field' },
+      h('legend', null, 'Погода дня'),
+      h('p', { class: 'hint' }, 'Open-Meteo получает округлённые координаты. Дневник сохраняет только сводку погоды.'),
+      locate, weatherStatus,
+      h('label', { class: 'check' }, weatherOn, h('span', null, 'Указать город вручную')),
+      city),
     h('div', { class: 'row' }, submit, h('a', { class: 'btn ghost', href: '#/' }, 'Отмена')),
     steps);
 
-  view.replaceChildren(h('section', { class: 'wrap narrow' },
-    h('p', { class: 'label' }, 'Новый день'),
-    h('h1', { class: 'h1' }, 'Записать день'),
-    form));
-  text.focus();
+  city.setAttribute('aria-label', 'Город');
+  view.replaceChildren(h('section', { class: 'wrap studio' },
+    h('aside', { class: 'studio-preview' }, studioScene, h('div', { class: 'studio-copy' },
+      h('p', { class: 'label' }, 'Атмосфера дня'), sceneCaption)),
+    h('div', { class: 'studio-editor' }, h('h1', { class: 'h1' }, 'Записать день'), form)));
 }
 
 // ---------- day view ----------
-async function viewDay(id) {
-  const day = await getDay(id);
-  if (!day) { location.hash = '#/'; return; }
+function photoAlbum(photos) {
+  const urls = photos.map(photo => URL.createObjectURL(photo.blob));
+  const photo = h('img', { class: 'photo-dialog-image', alt: '' });
+  const counter = h('span', { class: 'small muted', 'aria-live': 'polite' });
+  let index = 0;
+  const select = (to) => {
+    index = (to + urls.length) % urls.length;
+    photo.src = urls[index];
+    photo.alt = `Фото дня ${index + 1}`;
+    counter.textContent = `${index + 1} из ${urls.length}`;
+  };
+  const dialog = h('dialog', { class: 'dialog photo-dialog', 'aria-label': 'Фотографии дня' }, photo,
+    h('div', { class: 'photo-dialog-controls' },
+      urls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Предыдущее фото', onclick: () => select(index - 1) }, '←') : null,
+      counter,
+      urls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Следующее фото', onclick: () => select(index + 1) }, '→') : null,
+      h('button', { class: 'btn small', type: 'button', onclick: () => dialog.close() }, 'Закрыть')));
+  dialog.addEventListener('keydown', event => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      select(index + (event.key === 'ArrowLeft' ? -1 : 1));
+    }
+    event.stopPropagation();
+  });
+  document.body.append(dialog);
+  onCleanup(() => {
+    dialog.remove();
+    urls.forEach(url => URL.revokeObjectURL(url));
+  });
+  return h('section', { class: 'block day-album', 'aria-label': 'Фотографии дня' },
+    h('h2', { class: 'h2' }, `${photos.length} ${plural(photos.length, 'фотография', 'фотографии', 'фотографий')}`),
+    h('div', { class: 'day-album-grid' }, urls.map((src, i) => h('button', {
+      class: 'day-album-tile', type: 'button', 'aria-label': `Открыть фото ${i + 1}`,
+      onclick: () => { select(i); dialog.showModal(); },
+    }, h('img', { src, alt: '', loading: 'lazy', decoding: 'async' })))));
+}
+
+async function viewDay(id, current) {
+  const stored = await getDay(id);
+  if (!current()) return;
+  if (!stored) { location.hash = '#/'; return; }
+  const day = await upgradeDemo(stored);
   await fontsReady();
   const list = (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
+  if (!current()) return;
   const idx = list.findIndex(d => d.id === id), prev = list[idx - 1], next = list[idx + 1];
   let comp = computeDay(day);
 
   const canvas = h('canvas', { class: 'page', role: 'img', 'aria-label': `Воспоминание дня: ${day.meta.title}` });
   const back = h('canvas', { class: 'page-back', 'aria-hidden': 'true' });
   const flip = h('div', { class: 'flip', title: 'Нажмите, чтобы перевернуть страницу' }, h('div', { class: 'flip-inner' }, canvas, back));
-  const stage = h('div', { class: 'stage' }, flip, h('p', { class: 'flip-hint muted small' }, 'Нажмите на страницу, чтобы увидеть её оборот — почему день выглядит так'));
+  const dayScene = scenery();
+  const theme = atmosphere(day.date, day.inputs.weather, day.inputs.text);
+  setScenery(dayScene, theme);
+  const stage = h('div', { class: 'stage' }, dayScene, flip, h('p', { class: 'flip-hint small' }, 'Нажмите на страницу, чтобы увидеть оборот'));
   const side = h('aside', { class: 'side' });
   view.replaceChildren(h('section', { class: 'dayview' }, stage, side));
 
   const renderer = new PageRenderer(canvas);
   await renderer.load(day, comp);
+  if (!current()) {
+    renderer.dispose();
+    return;
+  }
+  const album = photoAlbum(day.photos);
   const sound = getSound();
   let playing = false, speaking = false, recording = false, t0 = performance.now(), buf = null, bufTried = false, lastVideo = null;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let raf = 0;
   const frame = () => {
-    const t = playing ? sound.time() : ((performance.now() - t0) / 1000) % renderer.D;
-    renderer.draw(t, playing ? sound.levels() : null);
+    const still = reducedMotion.matches && !recording;
+    const t = still ? renderer.posterTime() : playing ? sound.time() : ((performance.now() - t0) / 1000) % renderer.D;
+    renderer.draw(t, playing && !still ? sound.levels() : null, { poster: still });
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
@@ -597,6 +813,7 @@ async function viewDay(id) {
         next ? h('a', { class: 'btn ghost small', href: `#/day/${next.id}`, title: next.meta.title }, 'Позже ›') : null),
       h('p', { class: 'label' }, `${fmtDateLong(day.date)} · ${weekday(day.date)}`),
       h('h1', { class: 'day-title' }, day.meta.title),
+      h('p', { class: 'day-weather' }, [SEASON_RU[theme.season], weatherLabel(day.inputs.weather)].filter(Boolean).join(' · ')),
       h('p', { class: 'folder' }, h('span', { class: 'folder-ico', 'aria-hidden': 'true' }), `Папка: ${safeName(`${day.date} · ${day.meta.title}`)}`),
       h('p', { class: 'chip-row' },
         h('span', { class: 'chip strong' }, `${TECH[comp.primary].name} · ${Math.round(W[comp.primary] * 100)}%`),
@@ -605,6 +822,7 @@ async function viewDay(id) {
       h('div', { class: 'row tight' }, playBtn, voiceBtn, whyBtn),
       songNote, voiceNote,
       why,
+      album,
       h('div', { class: 'block' },
         h('h2', { class: 'h2' }, 'Песня'),
         h('p', null, `♪ ${meta.artist ? meta.artist + ' — ' : ''}${meta.title || day.song?.query || 'без названия'}${meta.year ? ` (${meta.year})` : ''}`),
@@ -613,7 +831,7 @@ async function viewDay(id) {
       h('div', { class: 'block' },
         h('h2', { class: 'h2' }, 'Запись'),
         h('p', { class: 'entry' }, day.text),
-        h('p', { class: 'muted small' }, `Разбор: ${day.meta.analyzer === 'claude' ? 'Claude + правила системы' : 'локальные правила'}. Это настроение записи, а не оценка состояния человека.`)),
+        h('p', { class: 'muted small' }, 'Настроение записи определяют локальные правила.')),
       h('div', { class: 'block' },
         h('h2', { class: 'h2' }, 'Поправить настроение'),
         h('p', { class: 'muted small' }, 'Если система прочитала день не так — передвиньте точку, страница перерисуется сразу.'),
@@ -669,30 +887,5 @@ async function viewDay(id) {
     document.removeEventListener('visibilitychange', onVis);
   });
 }
-
-// ---------- settings ----------
-function openSettings() {
-  const key = h('input', { type: 'password', id: 's-key', value: getSetting('apiKey'), autocomplete: 'off', placeholder: 'sk-ant-…' });
-  const photos = h('input', { type: 'checkbox', id: 's-photos' });
-  photos.checked = getSetting('sendPhotos') === '1';
-  const dlg = h('dialog', { class: 'dialog', 'aria-labelledby': 's-title' },
-    h('form', { method: 'dialog', class: 'form' },
-      h('h2', { class: 'h2', id: 's-title' }, 'Настройки'),
-      h('div', { class: 'field' },
-        h('label', { for: 's-key' }, 'Ключ Claude API (необязательно)'),
-        h('p', { class: 'hint' }, 'Без ключа текст разбирается локальными правилами. С ключом Claude уточняет настроение, название и детали. Ключ хранится только в этом браузере и отправляется только на api.anthropic.com.'),
-        key),
-      h('label', { class: 'check' }, photos, h('span', null, 'Отправлять в Claude уменьшенные фото (до 3) для точности')),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn primary', value: 'save' }, 'Сохранить настройки'),
-        h('button', { class: 'btn ghost', value: 'cancel' }, 'Отмена'))));
-  dlg.addEventListener('close', () => {
-    if (dlg.returnValue === 'save') { setSetting('apiKey', key.value.trim()); setSetting('sendPhotos', photos.checked ? '1' : '0'); toast('Настройки сохранены'); }
-    dlg.remove();
-  });
-  document.body.append(dlg);
-  dlg.showModal();
-}
-document.getElementById('settings-btn').addEventListener('click', openSettings);
 
 route();
