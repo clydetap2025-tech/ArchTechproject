@@ -15,7 +15,7 @@ import { memoryGallery, scenery, setScenery } from './gallery.js';
 
 const view = document.getElementById('view');
 // Bump when the visual system changes: archive covers re-render themselves in the background.
-const COVER_VER = 6;
+const COVER_VER = 7;
 let cleanups = [];
 let routeVersion = 0;
 let liveWeather = null;
@@ -676,7 +676,8 @@ async function viewDay(id, current) {
 
   const canvas = h('canvas', { class: 'page', role: 'img', 'aria-label': `Воспоминание дня: ${day.meta.title}` });
   const back = h('canvas', { class: 'page-back', 'aria-hidden': 'true' });
-  const flip = h('div', { class: 'flip', title: 'Нажмите, чтобы перевернуть страницу' }, h('div', { class: 'flip-inner' }, canvas, back));
+  const flip = h('div', { class: 'flip', role: 'button', tabindex: '0', 'aria-label': 'Перевернуть карточку', 'aria-pressed': 'false' },
+    h('div', { class: 'flip-inner' }, canvas, back));
   const dayScene = scenery();
   const theme = atmosphere(day.date, day.inputs.weather, day.inputs.text);
   setScenery(dayScene, theme);
@@ -743,9 +744,16 @@ async function viewDay(id, current) {
   const setWhy = on => {
     why.hidden = !on; whyBtn.setAttribute('aria-expanded', String(on));
     flip.classList.toggle('is-flipped', on);
+    flip.setAttribute('aria-pressed', String(on));
   };
   whyBtn.addEventListener('click', () => setWhy(why.hidden));
   flip.addEventListener('click', () => setWhy(!flip.classList.contains('is-flipped')));
+  flip.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    flip.click();
+  });
   drawBackPage(back, day, comp);
 
   // mood pad
