@@ -55,27 +55,28 @@ async function locateWeather(date) {
   return weather;
 }
 
-function weatherControl(scene, applyTheme = theme => setScenery(scene, theme)) {
+function weatherControl(applyTheme, useAutomaticTheme) {
   const description = h('span', { class: 'weather-reading', role: 'status' });
-  const button = h('button', { class: 'weather-action', type: 'button' });
+  const button = h('button', { class: 'weather-action', type: 'button', title: 'Использовать фон по погоде' });
   const update = () => {
     const theme = atmosphere(todayISO(), liveWeather);
     applyTheme(theme);
     description.textContent = liveWeather ? weatherLabel(liveWeather) : SEASON_RU[theme.season];
     button.textContent = liveWeather ? 'Обновить погоду ↗' : 'Определить по геолокации ↗';
   };
-  button.onclick = async () => {
+  const refresh = async () => {
     button.disabled = true;
     description.textContent = 'Определяю погоду…';
     try { await locateWeather(); update(); }
     catch (error) { description.textContent = error.message; }
     finally { button.disabled = false; }
   };
+  button.onclick = () => { useAutomaticTheme(); refresh(); };
   update();
   if (!checkedWeatherPermission) {
     checkedWeatherPermission = true;
     navigator.permissions?.query({ name: 'geolocation' }).then(permission => {
-      if (permission.state === 'granted' && button.isConnected && !button.disabled && !liveWeather) button.click();
+      if (permission.state === 'granted' && button.isConnected && !button.disabled && !liveWeather) refresh();
     }).catch(() => {});
   }
   return h('div', { class: 'weather-widget' }, h('span', { class: 'weather-symbol', 'aria-hidden': 'true' }, '◉'),
@@ -418,8 +419,11 @@ function homeStage(items, ...actions) {
   const seasons = ['summer', 'autumn', 'winter', 'spring'];
   const buttons = seasons.map(season => h('button', {
     class: 'btn small season-btn', type: 'button', 'aria-pressed': 'false',
-    title: 'Повторное нажатие возвращает фон по погоде',
-    onclick: () => { selected = selected === season ? null : season; renderSeason(); },
+    onclick: () => {
+      if (selected === season) return;
+      selected = season;
+      renderSeason();
+    },
   }, SEASON_RU[season]));
   function renderSeason() {
     setScenery(scene, selected ? {
@@ -427,7 +431,10 @@ function homeStage(items, ...actions) {
     } : automatic);
     buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(selected === seasons[index])));
   }
-  const weather = weatherControl(scene, theme => { automatic = theme; renderSeason(); });
+  const weather = weatherControl(theme => { automatic = theme; renderSeason(); }, () => {
+    selected = null;
+    renderSeason();
+  });
   return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
     h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Сезон фона' }, buttons),
     h('div', { class: 'landing-intro' },
