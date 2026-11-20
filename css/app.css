@@ -126,6 +126,16 @@ body:has(.landing) .topbar {
   position: relative; flex: 1;
   min-height: clamp(365px, 48svh, 630px); display: grid; grid-template-rows: minmax(0, 1fr);
 }
+.landscape-toolbar {
+  position: absolute; z-index: 10; inset: 0 0 auto;
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px;
+  pointer-events: none;
+}
+.landscape-toolbar > * { pointer-events: auto; }
+.landscape-toolbar .weather-widget { position: relative; inset: auto; max-width: 100%; }
+.season-controls { display: flex; gap: 5px; margin-left: auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.season-btn { text-transform: capitalize; }
+.season-btn[aria-pressed="true"] { --glass-tint: 160, 226, 214; --glass-opacity: .34; --glass-streak: .44; }
 .scenery, .scenery > div, .scenery::after { position: absolute; inset: 0; pointer-events: none; }
 .scenery { --haze: #15262e; z-index: -1; overflow: hidden; background: var(--haze); }
 .scenery[data-scene="winter"] { --haze: #3e5166; }
@@ -133,6 +143,18 @@ body:has(.landing) .topbar {
 .scenery[data-scene="spring"] { --haze: #354d33; }
 .scenery-photo { background: var(--landscape) center 54% / cover no-repeat; animation: landscape-in 850ms ease-out both; }
 .scenery[data-scene="autumn"] .scenery-photo { filter: sepia(.18) saturate(1.16); }
+.scenery-canopy { display: none; }
+.scenery[data-scene="autumn"] .scenery-canopy {
+  display: block; background: var(--landscape) center / cover no-repeat;
+  mask-image: linear-gradient(#000a, #0006 27%, transparent 63%);
+  filter: sepia(.18) saturate(1.16); transform-origin: 50% 0;
+  animation: canopy-breeze 7s ease-in-out infinite;
+}
+@keyframes canopy-breeze {
+  0%, 100% { transform: scale(1.012) skewX(0deg); }
+  36% { transform: scale(1.018) translateX(3px) skewX(.35deg); }
+  70% { transform: scale(1.014) translateX(-2px) skewX(-.24deg); }
+}
 .scenery::after {
   content: ''; z-index: 1;
   background: linear-gradient(180deg, #1016156b 0%, transparent 33%, #0d171546 62%, #0a1110e8 100%),
@@ -454,6 +476,7 @@ input[type=file]::file-selector-button {
   .studio-editor h1 { margin-bottom: 20px; }
 }
 @media (max-width: 600px) {
+  .season-controls .season-btn { padding-inline: 9px; min-height: 28px; font-size: 12px; }
   .topbar { padding: 8px 12px; gap: 8px; }
   .brand { gap: 7px; }
   .brand-name { font-size: 17px; }

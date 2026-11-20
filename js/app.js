@@ -55,12 +55,12 @@ async function locateWeather(date) {
   return weather;
 }
 
-function weatherControl(scene) {
+function weatherControl(scene, applyTheme = theme => setScenery(scene, theme)) {
   const description = h('span', { class: 'weather-reading', role: 'status' });
   const button = h('button', { class: 'weather-action', type: 'button' });
   const update = () => {
     const theme = atmosphere(todayISO(), liveWeather);
-    setScenery(scene, theme);
+    applyTheme(theme);
     description.textContent = liveWeather ? weatherLabel(liveWeather) : SEASON_RU[theme.season];
     button.textContent = liveWeather ? 'Обновить погоду ↗' : 'Определить по геолокации ↗';
   };
@@ -414,6 +414,20 @@ function daysMarkdown(covers) {
 
 function homeStage(items, ...actions) {
   const scene = scenery();
+  let automatic, selected = null;
+  const seasons = ['summer', 'autumn', 'winter', 'spring'];
+  const buttons = seasons.map(season => h('button', {
+    class: 'btn small season-btn', type: 'button', 'aria-pressed': 'false',
+    title: 'Повторное нажатие возвращает фон по погоде',
+    onclick: () => { selected = selected === season ? null : season; renderSeason(); },
+  }, SEASON_RU[season]));
+  function renderSeason() {
+    setScenery(scene, selected ? {
+      scene: selected, motion: selected === 'winter' ? 'snow' : selected === 'autumn' ? 'leaves' : 'still',
+    } : automatic);
+    buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(selected === seasons[index])));
+  }
+  const weather = weatherControl(scene, theme => { automatic = theme; renderSeason(); });
   return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
     h('div', { class: 'landing-intro' },
       h('div', { class: 'landing-heading' },
@@ -422,7 +436,8 @@ function homeStage(items, ...actions) {
       h('div', { class: 'landing-detail' },
         h('p', null, 'Фото, слова и песня складываются в живое воспоминание.'),
         h('div', { class: 'landing-actions' }, actions))),
-    h('div', { class: 'landscape-panel' }, weatherControl(scene), memoryGallery(items)));
+    h('div', { class: 'landscape-panel' }, h('div', { class: 'landscape-toolbar' }, weather,
+      h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Сезон фона' }, buttons)), memoryGallery(items)));
 }
 
 function viewEmpty() {

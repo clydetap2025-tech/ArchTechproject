@@ -4,6 +4,7 @@ import { landscapeURL } from './weather.js';
 export function scenery(className = '') {
   const scene = h('div', { class: `scenery ${className}`, 'aria-hidden': 'true' },
     h('div', { class: 'scenery-photo' }),
+    h('div', { class: 'scenery-canopy' }),
     h('div', { class: 'scenery-particles' }, Array.from({ length: 24 }, (_, index) => {
       const particle = h('i');
       particle.style.setProperty('--x', `${(index * 37 + 8) % 100}%`);
