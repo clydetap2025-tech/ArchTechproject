@@ -107,7 +107,7 @@ body:has(.landing) .topbar {
 .landing-intro {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 24px;
   width: 100%; max-width: 1620px; margin-inline: auto;
-  padding: clamp(29px, 4.1vw, 60px) clamp(8px, 2.4vw, 38px) clamp(14px, 2.6vw, 36px);
+  padding: clamp(14px, 1.7vw, 27px) clamp(8px, 2.4vw, 38px) clamp(14px, 2.6vw, 36px);
 }
 .landing-label { display: flex; align-items: center; gap: .8em; color: var(--accent); }
 .landing-label::before { content: ''; width: 22px; height: 1px; background: currentColor; }
@@ -126,14 +126,11 @@ body:has(.landing) .topbar {
   position: relative; flex: 1;
   min-height: clamp(365px, 48svh, 630px); display: grid; grid-template-rows: minmax(0, 1fr);
 }
-.landscape-toolbar {
-  position: absolute; z-index: 10; inset: 0 0 auto;
-  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px;
-  pointer-events: none;
+.landscape-panel > .weather-widget { inset: 0 auto auto 0; }
+.season-controls {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px;
+  margin-top: 12px; padding-inline: clamp(0px, 2vw, 30px);
 }
-.landscape-toolbar > * { pointer-events: auto; }
-.landscape-toolbar .weather-widget { position: relative; inset: auto; max-width: 100%; }
-.season-controls { display: flex; gap: 5px; margin-left: auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .season-btn { text-transform: capitalize; }
 .season-btn[aria-pressed="true"] { --glass-tint: 160, 226, 214; --glass-opacity: .34; --glass-streak: .44; }
 .scenery, .scenery > div, .scenery::after { position: absolute; inset: 0; pointer-events: none; }
