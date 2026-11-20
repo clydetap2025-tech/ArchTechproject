@@ -4,32 +4,35 @@ import { atmosphere, weatherLabel } from './weather.js';
 import { TECH } from './mood.js';
 
 export const PW = 1080, PH = 1920;
-const M = 64, W = PW - 2 * M;
-const MARK = '#f4f0e7', SECONDARY = '#c9cec5';
+const M = 66, W = PW - 2 * M;
+const MARK = '#f9f6ee', SECONDARY = '#d6d4cc';
+const INK = '#1e2723', PAPER = '#f2efe7', DETAIL = '#505951';
+const SERIF = 'Literata, Georgia, serif', SANS = 'Manrope, system-ui';
+const MONO = '"JetBrains Mono", monospace';
 const THEME = {
   autumn: [173, 91, 41], winter: [112, 158, 185], rain: [83, 129, 150],
   spring: [94, 140, 92], summer: [164, 142, 89],
 };
 const CROP = {
-  monet: { split: .58, hero: 876, radius: 30 },
-  kandinsky: { split: .64, hero: 818, radius: 12 },
-  matisse: { split: .41, hero: 795, radius: 26 },
-  hopper: { split: .58, hero: 850, radius: 18 },
-  ma: { split: .5, hero: 895, radius: 20 },
-  film: { split: .55, hero: 836, radius: 22 },
+  monet: { split: .58, hero: 1420 },
+  kandinsky: { split: .64, hero: 1380 },
+  matisse: { split: .41, hero: 1380 },
+  hopper: { split: .58, hero: 1400 },
+  ma: { split: .5, hero: 1440 },
+  film: { split: .55, hero: 1400 },
 };
 
 function layoutFor(primary, count) {
-  const { split, hero, radius } = CROP[primary] || CROP.film;
-  const gap = 18, first = Math.round((W - gap) * split);
-  const mainHeight = count === 1 ? 1206 : hero;
-  const top = 192, stripY = top + mainHeight + gap;
-  const stripHeight = top + 1206 - stripY;
-  const tiles = [{ x: M, y: top, w: W, h: mainHeight, radius }];
-  if (count === 2) tiles.push({ x: M, y: stripY, w: W, h: stripHeight, radius });
+  const { split, hero } = CROP[primary] || CROP.film;
+  const gap = 12, first = Math.round((W - gap) * split);
+  const mainHeight = count === 1 ? 1740 : hero;
+  const stripY = mainHeight + 27;
+  const stripHeight = 1740 - stripY;
+  const tiles = [{ x: 0, y: 0, w: PW, h: mainHeight, radius: 0 }];
+  if (count === 2) tiles.push({ x: M, y: stripY, w: W, h: stripHeight, radius: 8 });
   else if (count > 2) {
-    tiles.push({ x: M, y: stripY, w: first, h: stripHeight, radius });
-    tiles.push({ x: M + first + gap, y: stripY, w: W - first - gap, h: stripHeight, radius });
+    tiles.push({ x: M, y: stripY, w: first, h: stripHeight, radius: 8 });
+    tiles.push({ x: M + first + gap, y: stripY, w: W - first - gap, h: stripHeight, radius: 8 });
   }
   return tiles;
 }
@@ -42,40 +45,21 @@ function coverPhoto(ctx, photo, rect, zoom) {
     rect.x, rect.y, rect.w, rect.h);
 }
 
-function panelBackground(ctx, accent, season) {
-  ctx.fillStyle = '#101615';
-  ctx.fillRect(0, 0, PW, PH);
-  const glow = ctx.createRadialGradient(PW * .9, 0, 0, PW * .9, 0, PH * .8);
-  glow.addColorStop(0, rgbCss(season || accent, .32));
-  glow.addColorStop(1, 'transparent');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, PW, PH);
-}
-
-function horizontalRule(ctx, y) {
-  ctx.fillStyle = '#e7f0e333';
+function horizontalRule(ctx, y, color = '#e7f0e350') {
+  ctx.fillStyle = color;
   ctx.fillRect(M, y, W, 2);
 }
 
-function header(ctx, day, comp) {
-  const accent = comp.style.accents[0];
-  ctx.fillStyle = rgbCss(accent);
-  ctx.beginPath();
-  ctx.arc(M + 11, 71, 10, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = MARK;
-  ctx.font = '550 31px Manrope, system-ui';
-  ctx.fillText('Погода внутри', M + 33, 83, W * .56);
-  ctx.textAlign = 'right';
-  ctx.font = '500 27px "JetBrains Mono", monospace';
-  ctx.fillText(fmtDateDots(day.date), PW - M, 81, W * .45);
-  ctx.fillStyle = SECONDARY;
-  ctx.font = '400 22px Manrope, system-ui';
-  const weather = weatherLabel(day.inputs.weather);
-  const detail = [TIME_RU[comp.mood.light], weather].filter(Boolean).join(' · ');
-  ctx.fillText(detail, PW - M, 126, W);
+function masthead(ctx, date, foreground, line) {
   ctx.textAlign = 'left';
-  horizontalRule(ctx, 154);
+  ctx.fillStyle = foreground;
+  ctx.font = '650 27px ' + SANS;
+  ctx.fillText('ПОГОДА ВНУТРИ', M, 98);
+  ctx.textAlign = 'right';
+  ctx.font = '500 26px ' + MONO;
+  ctx.fillText(fmtDateDots(date), PW - M, 98);
+  ctx.textAlign = 'left';
+  horizontalRule(ctx, 128, line);
 }
 
 function wrap(ctx, text, width) {
@@ -101,42 +85,65 @@ function limitedText(ctx, text, size, maxLines, width, family, weight) {
     if (lines.length <= maxLines) return { lines, lineHeight: px * 1.11 };
   }
   const clipped = lines.slice(0, maxLines);
-  if (lines.length > maxLines) clipped[maxLines - 1] += '…';
+  if (lines.length > maxLines) {
+    const last = maxLines - 1;
+    while (clipped[last].length > 1 && ctx.measureText(clipped[last] + '…').width > width) {
+      clipped[last] = clipped[last].slice(0, -1);
+    }
+    clipped[last] += '…';
+  }
   return { lines: clipped, lineHeight: size * .7 };
 }
 
-function footer(ctx, day, comp) {
-  const accent = comp.style.accents[0];
-  const palette = comp.style.palette.slice(0, 5);
-  ctx.fillStyle = SECONDARY;
-  ctx.font = '500 21px "JetBrains Mono", monospace';
-  ctx.fillText(String(day.photos.length).padStart(2, '0') + ' · ' + TECH[comp.primary].name.toUpperCase(), M, 1451, W - 176);
-  palette.forEach((color, index) => {
-    ctx.fillStyle = rgbCss(color);
-    ctx.beginPath();
-    ctx.roundRect(PW - M - 28 * (palette.length - index), 1428, 21, 21, 5);
-    ctx.fill();
-  });
-  const title = limitedText(ctx, day.meta.title, 89, 3, W, 'Literata, Georgia, serif', 550);
-  ctx.fillStyle = MARK;
-  title.lines.forEach((line, index) => ctx.fillText(line, M, 1561 + index * title.lineHeight, W));
+function coverTitle(ctx, day, comp, bottom) {
+  const topShade = ctx.createLinearGradient(0, 0, 0, 300);
+  topShade.addColorStop(0, '#101715dc');
+  topShade.addColorStop(1, '#10171500');
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, PW, 300);
+
+  const shade = ctx.createLinearGradient(0, bottom - 680, 0, bottom);
+  shade.addColorStop(0, '#11171400');
+  shade.addColorStop(.54, '#111714bc');
+  shade.addColorStop(1, '#111714f8');
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, bottom - 680, PW, 680);
+  masthead(ctx, day.date, MARK, '#f6f1e969');
+
   const caption = day.meta.caption;
-  if (caption) {
-    ctx.font = 'italic 400 32px Literata, Georgia, serif';
-    ctx.fillStyle = SECONDARY;
-    const y = Math.min(1785, 1561 + Math.max(1, title.lines.length - 1) * title.lineHeight + 62);
-    ctx.fillText('«' + caption + '»', M, y, W);
+  const title = limitedText(ctx, day.meta.title, 106, 3, W, SERIF, 500);
+  const lastTitle = bottom - (caption ? 146 : 79);
+  const firstTitle = lastTitle - (title.lines.length - 1) * title.lineHeight;
+  ctx.fillStyle = MARK;
+  title.lines.forEach((line, index) => ctx.fillText(line, M, firstTitle + index * title.lineHeight, W));
+
+  const detail = [TIME_RU[comp.mood.light], weatherLabel(day.inputs.weather)].filter(Boolean).join(' · ');
+  if (detail) {
+    ctx.font = '600 26px ' + SANS;
+    ctx.fillStyle = '#eee0bc';
+    ctx.fillText(detail.toUpperCase(), M, firstTitle - title.lineHeight - 25, W);
   }
-  horizontalRule(ctx, 1820);
+  if (caption) {
+    ctx.fillStyle = SECONDARY;
+    const quote = limitedText(ctx, '«' + caption + '»', 32, 2, W, SERIF, 'italic 400');
+    quote.lines.forEach((line, index) => ctx.fillText(line, M, lastTitle + 57 + index * quote.lineHeight, W));
+  }
+}
+
+function soundtrack(ctx, day) {
+  horizontalRule(ctx, 1778);
   const meta = day.song?.meta;
   const song = [meta?.artist, meta?.title || day.song?.query].filter(Boolean).join(' — ');
+  ctx.font = '600 22px ' + MONO;
+  ctx.fillStyle = SECONDARY;
+  ctx.fillText('САУНДТРЕК', M, 1824);
+  ctx.textAlign = 'right';
+  ctx.fillText(day.photos.length + ' ФОТО', PW - M, 1824);
+  ctx.textAlign = 'left';
   if (song) {
-    ctx.fillStyle = rgbCss(accent);
-    ctx.font = '700 26px Manrope, system-ui';
-    ctx.fillText('♪', M, 1871);
     ctx.fillStyle = MARK;
-    ctx.font = '450 27px Manrope, system-ui';
-    ctx.fillText(song, M + 32, 1871, W - 32);
+    ctx.font = '500 34px ' + SANS;
+    ctx.fillText(song, M, 1872, W);
   }
 }
 
@@ -155,7 +162,6 @@ export class PageRenderer {
     try {
       for (const photo of day.photos) this.photos.push(await createImageBitmap(photo.blob));
       if (!this.photos.length) throw new Error('В записи нет фотографий');
-      this.theme = atmosphere(day.date, day.inputs.weather, day.inputs.text);
       this.setComputed(comp);
     } catch (error) {
       this.dispose();
@@ -187,9 +193,8 @@ export class PageRenderer {
     const zoom = 1 + Math.min(.036, (poster ? 0 : elapsed * .004 + (live?.bass || 0) * .009) * this.comp.mood.E);
     const stride = this.photos.length <= this.tiles.length ? 1 : this.tiles.length;
     const base = index * stride;
-    const palette = this.comp.style.accents[0];
-    panelBackground(ctx, palette, THEME[this.theme.scene]);
-    header(ctx, this.day, this.comp);
+    ctx.fillStyle = '#111714';
+    ctx.fillRect(0, 0, PW, PH);
     this.tiles.forEach((tile, order) => {
       ctx.save();
       ctx.beginPath();
@@ -203,7 +208,8 @@ export class PageRenderer {
       coverPhoto(ctx, this.photos[(base + order) % this.photos.length], tile, zoom);
       ctx.restore();
     });
-    footer(ctx, this.day, this.comp);
+    coverTitle(ctx, this.day, this.comp, this.tiles[0].h);
+    soundtrack(ctx, this.day);
   }
 
   async poster(width = PW) {
@@ -221,43 +227,62 @@ export function drawBackPage(canvas, day, comp) {
   canvas.width = PW;
   canvas.height = PH;
   const ctx = canvas.getContext('2d');
-  const accent = comp.style.accents[0];
-  panelBackground(ctx, accent, THEME[atmosphere(day.date, day.inputs.weather, day.inputs.text).scene]);
-  header(ctx, day, comp);
-  ctx.fillStyle = MARK;
-  ctx.font = '500 75px Literata, Georgia, serif';
-  ctx.fillText('Почему этот день', M, 277, W);
-  ctx.fillText('выглядит так', M, 367, W);
-  horizontalRule(ctx, 423);
+  const theme = atmosphere(day.date, day.inputs.weather, day.inputs.text);
+  const accent = THEME[theme.scene] || comp.style.accents[0];
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, PW, PH);
+  masthead(ctx, day.date, INK, '#c7c7bd');
+  ctx.fillStyle = INK;
+  ctx.font = '500 95px ' + SERIF;
+  ctx.fillText('Атмосфера', M, 283, W);
+  ctx.fillText('этого дня', M, 392, W);
+  ctx.fillStyle = rgbCss(accent);
+  ctx.fillRect(M, 426, 112, 5);
 
   const priority = ['Система', 'Спор', 'Текст', 'Фото', 'Музыка', 'Погода', 'Звук', 'Голос'];
-  const rules = [];
-  for (const source of priority) {
-    const item = comp.recipe.find(rule => rule.src === source);
-    if (item) rules.push(item);
-  }
-  rules.slice(0, 7).forEach((item, index) => {
-    const y = 502 + index * 160;
-    ctx.fillStyle = SECONDARY;
-    ctx.font = '600 20px "JetBrains Mono", monospace';
-    ctx.fillText(item.src.toUpperCase(), M, y, W);
-    ctx.fillStyle = MARK;
-    ctx.font = '650 30px Manrope, system-ui';
-    ctx.fillText(item.sig, M, y + 42, W);
-    ctx.fillStyle = SECONDARY;
-    ctx.font = '400 26px Manrope, system-ui';
-    wrap(ctx, item.rule, W).slice(0, 2).forEach((line, i) => ctx.fillText(line, M, y + 79 + i * 30, W));
-    horizontalRule(ctx, y + 125);
-  });
-  comp.style.palette.forEach((color, index) => {
-    ctx.fillStyle = rgbCss(color);
+  const rules = priority.map(source => comp.recipe.find(rule => rule.src === source)).filter(Boolean);
+  const gridY = 486, gridBottom = 1490, gap = 16;
+  const columns = 2, rows = Math.max(1, Math.ceil(rules.length / columns));
+  const width = (W - gap) / 2, height = (gridBottom - gridY - (rows - 1) * gap) / rows;
+  rules.forEach((item, index) => {
+    const x = M + (index % columns) * (width + gap);
+    const y = gridY + Math.floor(index / columns) * (height + gap);
+    const cellW = index === rules.length - 1 && index % columns === 0 ? W : width;
+    const textW = cellW - 62, textX = x + 31;
+    ctx.fillStyle = '#e7e8de';
     ctx.beginPath();
-    ctx.roundRect(M + index * 70, 1635, 56, 56, 12);
+    ctx.roundRect(x, y, cellW, height, 12);
     ctx.fill();
+    ctx.fillStyle = DETAIL;
+    ctx.font = '600 22px ' + MONO;
+    ctx.fillText(item.src.toUpperCase(), textX, y + 46, textW);
+    const sig = limitedText(ctx, item.sig, 33, 2, textW, SANS, 700);
+    ctx.fillStyle = INK;
+    sig.lines.forEach((line, lineIndex) => ctx.fillText(line, textX, y + 96 + sig.lineHeight * lineIndex, textW));
+    const rule = limitedText(ctx, item.rule, 25, 3, textW, SANS, 450);
+    ctx.fillStyle = DETAIL;
+    const ruleY = y + 134 + (sig.lines.length - 1) * sig.lineHeight;
+    rule.lines.forEach((line, lineIndex) => ctx.fillText(line, textX, ruleY + lineIndex * rule.lineHeight, textW));
   });
-  ctx.fillStyle = MARK;
-  ctx.font = '550 30px Manrope, system-ui';
-  ctx.fillText(day.meta.title, M, 1853, W);
+
+  ctx.fillStyle = DETAIL;
+  ctx.font = '600 22px ' + MONO;
+  ctx.fillText('ПАЛИТРА ДНЯ', M, 1565);
+  const palette = comp.style.palette;
+  const paletteY = 1602, paletteH = 92, inset = W / (palette.length || 1);
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(M, paletteY, W, paletteH, 10);
+  ctx.clip();
+  palette.forEach((color, index) => {
+    ctx.fillStyle = rgbCss(color);
+    ctx.fillRect(M + index * inset, paletteY, inset + 1, paletteH);
+  });
+  ctx.restore();
+  horizontalRule(ctx, 1760, '#c7c7bd');
+  ctx.fillStyle = INK;
+  const title = limitedText(ctx, day.meta.title, 42, 2, W, SERIF, 500);
+  title.lines.forEach((line, index) => ctx.fillText(line, M, 1823 + title.lineHeight * index, W));
 }
 
 export async function renderCover(day, comp, width = 540) {
