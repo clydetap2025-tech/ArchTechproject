@@ -5,7 +5,7 @@ const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
 const DAILY = 'weather_code,temperature_2m_max,temperature_2m_min,snowfall_sum';
 const SNOW = new Set([71, 73, 75, 77, 85, 86]);
 const RAIN = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
-const PHOTOS = { winter: 'winterForest', autumn: 'autumnAlley', spring: 'autumnPond', summer: 'seaHorizon', rain: 'rainWindow' };
+const PHOTOS = { winter: 'winterForest', autumn: 'autumnAlley', spring: 'villageGarden', summer: 'seaHorizon', rain: 'rainWindow' };
 
 export function landscapeURL(scene) {
   return new URL(`../demo/photos/${PHOTOS[scene] || PHOTOS.summer}.jpg`, import.meta.url).href;
