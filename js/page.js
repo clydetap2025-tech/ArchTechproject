@@ -53,7 +53,7 @@ function masthead(ctx, date, foreground, line) {
   ctx.textAlign = 'left';
   ctx.fillStyle = foreground;
   ctx.font = '600 29px ' + FONT;
-  ctx.fillText('Погода внутри', M, 98);
+  ctx.fillText('DayTrace', M, 98);
   ctx.textAlign = 'right';
   ctx.font = '500 26px ' + FONT;
   ctx.fillText(fmtDateDots(date), PW - M, 98);

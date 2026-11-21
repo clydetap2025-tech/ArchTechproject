@@ -13,6 +13,7 @@ import { saveToFolder, canUseFolders, safeName, zipFiles } from './folder.js';
 import { DEMO_DAYS, DEMO_VERSION, loadDemoPhoto } from './demo.js';
 import { atmosphere, deviceLocation, fetchWeatherAt, fetchWeatherByCity, weatherLabel } from './weather.js';
 import { memoryGallery, scenery, setScenery, animateScenery } from './gallery.js';
+import { archiveAlbum } from './archive.js';
 
 const view = document.getElementById('view');
 // Version of the rendered day cover saved alongside an entry.
@@ -21,7 +22,6 @@ let cleanups = [];
 let routeVersion = 0;
 let liveWeather = null;
 let deviceCoordinates = null;
-let checkedWeatherPermission = false;
 const onCleanup = fn => cleanups.push(fn);
 
 // ---------- helpers ----------
@@ -43,7 +43,7 @@ async function locateWeather(date) {
   return weather;
 }
 
-function weatherControl(applyTheme, useAutomaticTheme) {
+function weatherControl(applyTheme) {
   const description = h('span', { class: 'weather-reading', role: 'status' });
   const button = h('button', { class: 'weather-action', type: 'button', title: 'Использовать фон по погоде' });
   const update = () => {
@@ -59,10 +59,9 @@ function weatherControl(applyTheme, useAutomaticTheme) {
     catch (error) { description.textContent = error.message; }
     finally { button.disabled = false; }
   };
-  button.onclick = () => { useAutomaticTheme(); refresh(); };
+  button.onclick = refresh;
   update();
-  if (!checkedWeatherPermission) {
-    checkedWeatherPermission = true;
+  if (!liveWeather) {
     navigator.permissions?.query({ name: 'geolocation' }).then(permission => {
       if (permission.state === 'granted' && button.isConnected && !button.disabled && !liveWeather) refresh();
     }).catch(() => {});
@@ -212,8 +211,8 @@ async function route() {
   const current = () => version === routeVersion;
   cleanups.forEach(f => { try { f(); } catch { /* */ } });
   cleanups = [];
-  window.scrollTo(0, 0);
   const hash = location.hash || '#/';
+  window.scrollTo(0, 0);
   document.querySelectorAll('[data-nav]').forEach(a => {
     const active = a.getAttribute('href') === hash;
     a.classList.toggle('is-active', active);
@@ -225,7 +224,8 @@ async function route() {
     else if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
     else if (hash === '#/new' && !account) view.replaceChildren(loginForm('#/new'));
     else if (hash === '#/new') await viewNew();
-    else await viewArchive(current, hash === '#/archive');
+    else if (hash === '#/archive') await viewArchive(current);
+    else await viewHome(current);
   } catch (e) {
     if (!current()) return;
     console.error(e);
@@ -253,82 +253,37 @@ document.addEventListener('pointermove', setGlassSpot, { passive: true });
 document.addEventListener('pointerdown', setGlassSpot, { passive: true });
 
 // ---------- archive ----------
-const archiveDate = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', timeZone: 'UTC' });
-const archiveMonth = new Intl.DateTimeFormat('ru', { month: 'long', timeZone: 'UTC' });
 const newestFirst = (a, b) => b.date.localeCompare(a.date) || b.created - a.created;
 
-async function viewArchive(current, archiveOnly) {
+function dayImage(day) {
+  const photo = day.photos[0]?.blob || day.cover;
+  if (!photo) return null;
+  const url = URL.createObjectURL(photo);
+  onCleanup(() => URL.revokeObjectURL(url));
+  return url;
+}
+
+async function viewHome(current) {
+  const days = await allDays();
+  if (!current()) return;
+  if (!days.length) return viewEmpty();
+  const recent = days.sort(newestFirst).slice(0, 9).map(day => ({
+    title: day.meta.title, image: dayImage(day), date: fmtDateLong(day.date), href: `#/day/${day.id}`,
+  }));
+  view.replaceChildren(homeStage(recent, h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день')));
+}
+
+async function viewArchive(current) {
   const days = await allDays();
   if (!current()) return;
   days.sort(newestFirst);
-  if (!days.length && !archiveOnly) return viewEmpty();
 
-  const urls = [];
-  onCleanup(() => urls.forEach(url => URL.revokeObjectURL(url)));
-  const comps = new Map(days.map(day => [day.id, safeCompute(day)]));
-  const cards = days.map(day => {
-    const comp = comps.get(day.id);
-    const photo = day.photos[0]?.blob || day.cover;
-    const image = photo ? URL.createObjectURL(photo) : null;
-    if (image) urls.push(image);
-    const date = fmtDateLong(day.date);
-    const title = day.meta.title;
-    const tech = comp?.primary || '';
-    const light = comp?.mood.light || '';
-    const hay = [title, day.text, day.song?.meta?.artist, day.song?.meta?.title, day.date, date,
-      TECH[tech]?.name, TIME_RU[light], SEASON_RU[day.inputs.text.season]].join(' ').toLowerCase();
-    const card = h('a', { class: 'archive-card', href: `#/day/${day.id}`, 'aria-label': `${title}, ${date}` },
-      image && h('img', { src: image, alt: '', loading: 'lazy', decoding: 'async' }),
-      h('div', { class: 'archive-caption' },
-        h('time', { datetime: day.date }, archiveDate.format(new Date(day.date))),
-        h('h4', null, title)),
-      h('span', { class: 'archive-card-arrow', 'aria-hidden': 'true' }, '↗'));
-    return { day, image, date, tech, light, hay, card };
-  });
-
-  const results = h('div', { class: 'archive-results' });
-  const noResults = h('p', { class: 'archive-empty', role: 'status', hidden: true }, 'Ничего не нашлось. Измените запрос или сбросьте фильтры.');
-  const filters = { query: '', tech: '', light: '' };
-  let newest = true;
-  function apply() {
-    const groups = new Map();
-    const ordered = newest ? cards : [...cards].reverse();
-    for (const entry of ordered) {
-      if (filters.query && !entry.hay.includes(filters.query)) continue;
-      if (filters.tech && entry.tech !== filters.tech) continue;
-      if (filters.light && entry.light !== filters.light) continue;
-      const year = entry.day.date.slice(0, 4);
-      if (!groups.has(year)) groups.set(year, []);
-      groups.get(year).push(entry.card);
-    }
-    results.replaceChildren(...[...groups].map(([year, entries]) =>
-      h('section', { class: 'archive-year' }, h('h3', null, year),
-        h('div', { class: 'archive-grid', 'data-leads': Math.min(3, entries.length) }, entries))));
-    noResults.hidden = Boolean(groups.size);
-  }
-  const search = h('input', { type: 'search', 'aria-label': 'Поиск по дневнику', placeholder: 'Поиск по дневнику',
-    oninput: event => { filters.query = event.target.value.trim().toLowerCase(); apply(); } });
-  const filterGroup = (key, legend, values, label) => {
-    const buttons = ['', ...values].map(value => h('button', { class: 'archive-chip', type: 'button', value,
-      'aria-pressed': String(!value), onclick: () => {
-        filters[key] = filters[key] === value ? '' : value;
-        buttons.forEach(button => button.setAttribute('aria-pressed', String(button.value === filters[key])));
-        apply();
-      },
-    }, value ? label(value) : 'Все'));
-    return h('fieldset', { class: 'archive-filter-group' }, h('legend', null, legend), h('div', null, buttons));
-  };
-  const techs = TECH_ORDER.filter(key => cards.some(entry => entry.tech === key));
-  const lights = ['morning', 'day', 'evening', 'night'].filter(key => cards.some(entry => entry.light === key));
-  const filterMenu = h('details', { class: 'archive-disclosure', name: 'archive-tools' },
-    h('summary', { class: 'archive-control' }, h('span', { class: 'archive-sliders', 'aria-hidden': 'true' }, h('i'), h('i')), 'Фильтры'),
-    h('div', { class: 'archive-popover archive-filters' },
-      filterGroup('tech', 'Техника', techs, key => TECH[key].name),
-      filterGroup('light', 'Время суток', lights, key => TIME_RU[key])));
+  const entries = days.map(day => ({ day, comp: safeCompute(day), image: dayImage(day), date: fmtDateLong(day.date) }));
+  const comps = new Map(entries.map(({ day, comp }) => [day.id, comp]));
   const demoCount = new Set(days.map(day => exampleFor(day)?.date).filter(Boolean)).size;
   const status = h('p', { class: 'small muted', role: 'status', hidden: true });
-  const demoBtn = h('button', { class: 'archive-action', type: 'button', onclick: async () => {
-    demoBtn.disabled = true;
+  const demoButton = demoCount < DEMO_DAYS.length && h('button', { class: 'album-action', type: 'button', onclick: async () => {
+    demoButton.disabled = true;
     status.hidden = false;
     try {
       await seedDemo((index, example) => { status.textContent = `Загружаю демо · ${fmtDateLong(example.date)}…`; });
@@ -336,59 +291,11 @@ async function viewArchive(current, archiveOnly) {
     } catch (error) {
       console.error(error);
       status.textContent = 'Демо не загрузилось. Попробуйте ещё раз.';
-    } finally { demoBtn.disabled = false; }
+    } finally { demoButton.disabled = false; }
   } }, 'Загрузить демо');
-  const exportBtn = h('button', { class: 'archive-action', type: 'button', onclick: () => exportForSubmission(exportBtn, days, comps) }, 'Материалы для сдачи');
-  const actions = h('details', { class: 'archive-disclosure', name: 'archive-tools' },
-    h('summary', { class: 'archive-control archive-more', 'aria-label': 'Действия с архивом' }, '···'),
-    h('div', { class: 'archive-popover' }, demoCount < DEMO_DAYS.length && demoBtn, exportBtn));
-  const sort = h('button', { class: 'archive-sort', type: 'button', onclick: () => {
-    newest = !newest;
-    sort.textContent = newest ? 'Сначала новые ↓' : 'Сначала старые ↑';
-    apply();
-  } }, 'Сначала новые ↓');
-
-  const title = h(archiveOnly ? 'h1' : 'h2', { class: 'archive-title', id: 'archive-title' }, 'Архив');
-  const section = h('section', { class: 'archive-list', 'aria-labelledby': title.id });
-  if (days.length) {
-    const recentMonth = archiveMonth.format(new Date(days[0].date));
-    const firstMonth = archiveMonth.format(new Date(days.at(-1).date));
-    const year = days[0].date.slice(0, 4), startYear = days.at(-1).date.slice(0, 4);
-    const period = year !== startYear ? startYear + '–' + year :
-      (firstMonth === recentMonth ? recentMonth : firstMonth + ' – ' + recentMonth) + ' ' + year;
-    section.append(h('div', { class: 'archive-head' },
-      h('div', null, title, h('p', { class: 'archive-count' }, `${days.length} ${plural(days.length, 'запись', 'записи', 'записей')} · ${period}`)),
-      h('div', { class: 'archive-tools' }, h('label', { class: 'archive-search' }, h('span', { 'aria-hidden': 'true' }), search), filterMenu, actions)),
-    status, h('div', { class: 'archive-content' }, sort, results, noResults));
-    apply();
-    const closeMenus = event => {
-      for (const menu of [filterMenu, actions]) {
-        if (menu.open && !menu.contains(event.target)) menu.open = false;
-      }
-    };
-    const dismissMenus = event => {
-      if (event.key !== 'Escape') return;
-      const menu = [filterMenu, actions].find(detail => detail.open);
-      if (!menu) return;
-      menu.open = false;
-      menu.querySelector('summary').focus();
-    };
-    document.addEventListener('pointerdown', closeMenus);
-    document.addEventListener('keydown', dismissMenus);
-    onCleanup(() => {
-      document.removeEventListener('pointerdown', closeMenus);
-      document.removeEventListener('keydown', dismissMenus);
-    });
-  } else {
-    section.append(title, h('p', { class: 'archive-empty' }, 'Здесь появятся записанные дни.'),
-      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/new' }, 'Записать день'), demoBtn), status);
-  }
-
-  if (archiveOnly) view.replaceChildren(section);
-  else {
-    const recent = cards.slice(0, 9).map(({ day, image, date }) => ({ title: day.meta.title, image, date, href: `#/day/${day.id}` }));
-    view.replaceChildren(homeStage(recent, h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день')), section);
-  }
+  const exportButton = days.length > 0 && h('button', { class: 'album-action', type: 'button',
+    onclick: () => exportForSubmission(exportButton, days, comps) }, 'Материалы для сдачи');
+  view.replaceChildren(archiveAlbum(entries, { status, demoButton, exportButton }));
 }
 
 // ---------- submission pack: every page, its back, the feed sheet and the list of folders ----------
@@ -416,7 +323,7 @@ async function exportForSubmission(btn, days, comps) {
     btn.textContent = 'Собираю ленту…';
     files.push(['лента.jpg', await feedSheet(covers)]);
     files.push(['дни.md', new Blob([daysMarkdown(covers)], { type: 'text/markdown;charset=utf-8' })]);
-    downloadBlob(await zipFiles('Погода внутри — примеры дней/', files), 'Погода внутри — примеры дней.zip');
+    downloadBlob(await zipFiles('DayTrace — примеры дней/', files), 'DayTrace — примеры дней.zip');
     toast(`Скачан архив: ${sorted.length} страниц, их обороты, лента и список папок`);
   } catch (e) {
     console.error(e);
@@ -431,7 +338,7 @@ async function feedSheet(covers) {
   c.width = gap + n * (cw + gap); c.height = top + ch + 150;
   const x = c.getContext('2d');
   x.fillStyle = '#ece6db'; x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = '#1d1a17'; x.font = '600 48px ' + FONT; x.fillText('Погода внутри — лента дней', gap, 78);
+  x.fillStyle = '#1d1a17'; x.font = '600 48px ' + FONT; x.fillText('DayTrace — лента дней', gap, 78);
   x.font = '400 20px ' + FONT; x.fillStyle = 'rgba(29,26,23,.6)';
   x.fillText(`${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'дня' : 'дней'} · один дневник · у каждого дня своя «рука»`.toUpperCase(), gap, 116);
   for (let i = 0; i < n; i++) {
@@ -456,40 +363,22 @@ function daysMarkdown(covers) {
     const mix = `${TECH[c.primary].name} ${Math.round(c.weights[c.primary] * 100)}%` + (c.weights[c.secondary] >= 0.05 ? ` + ${TECH[c.secondary].name} ${Math.round(c.weights[c.secondary] * 100)}%` : '');
     return `| ${i + 1} | ${d.date} | ${d.meta.title} | ${mix} | ${m.artist ? m.artist + ' — ' : ''}${m.title || ''} | ${Mu.bpm} BPM, ${Mu.key} |`;
   });
-  return `# Погода внутри — примеры дней\n\nНазвания папок придуманы прототипом по тексту записи.\n\n| № | Дата | Папка | Техника | Песня | Музыка |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
+  return `# DayTrace — примеры дней\n\nНазвания папок придуманы прототипом по тексту записи.\n\n| № | Дата | Папка | Техника | Песня | Музыка |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
 }
 
 function homeStage(items, ...actions) {
   const scene = scenery({ particles: false });
-  const { toggle, sync } = animateScenery(scene, onCleanup);
-  let automatic, selected = null;
-  const seasons = ['summer', 'autumn', 'winter', 'spring'];
-  const buttons = seasons.map(season => h('button', {
-    class: 'btn small season-btn', type: 'button', 'aria-pressed': 'false',
-    onclick: () => {
-      if (selected === season) return;
-      selected = season;
-      renderSeason();
-    },
-  }, SEASON_RU[season]));
-  function renderSeason() {
-    setScenery(scene, selected ? {
-      scene: selected, motion: selected === 'winter' ? 'snow' : selected === 'autumn' ? 'leaves' : 'still',
-    } : automatic);
+  const sync = animateScenery(scene, onCleanup);
+  const weather = weatherControl(theme => {
+    setScenery(scene, theme);
     sync();
-    buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(selected === seasons[index])));
-  }
-  const weather = weatherControl(theme => { automatic = theme; renderSeason(); }, () => {
-    selected = null;
-    renderSeason();
   });
   return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
-    h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Фон дневника' }, buttons, toggle),
     h('div', { class: 'landing-intro' },
-      h('h1', { id: 'landing-title' }, 'Как прошёл день?'),
-      h('div', { class: 'landing-detail' },
-        h('p', null, 'Сохраните пару строк, фотографии и песню дня.'),
-        h('div', { class: 'landing-actions' }, actions))),
+      h('div', { class: 'landing-copy' },
+        h('h1', { id: 'landing-title' }, 'Как прошёл день?'),
+        h('p', null, 'Собери воспоминание из фото, заметки и песни.')),
+      h('div', { class: 'landing-actions' }, actions)),
     h('div', { class: 'landscape-panel' }, weather, memoryGallery(items)));
 }
 

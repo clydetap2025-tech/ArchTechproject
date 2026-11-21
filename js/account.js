@@ -1,5 +1,6 @@
 import { accountServer } from './account-config.js';
 import { h } from './util.js';
+import { skipBookOnReload } from './book-intro.js';
 
 const key = 'pv:account:' + accountServer;
 function readSession() {
@@ -25,6 +26,10 @@ export async function request(path, { method = 'GET', body, token = account?.tok
   try {
     response = await fetch(accountServer + '/api/' + path, { method, headers, body, cache: 'no-store', credentials: 'omit' });
   } catch { throw new Error('Сервер дневника недоступен. Проверьте соединение и попробуйте снова.'); }
+  const contentType = response.headers.get('content-type') || '';
+  if (response.status === 404 && accountServer === location.origin && !contentType.includes('application/json')) {
+    throw new Error('К этой версии дневника ещё не подключён PocketBase.');
+  }
   if (!response.ok) {
     if (response.status === 401 && account && token === account.token) signOut();
     const error = new Error(response.status === 413 ? 'Файлы слишком большие для сервера.' :
@@ -38,10 +43,15 @@ export async function request(path, { method = 'GET', body, token = account?.tok
   catch { throw new Error('К этому сайту ещё не подключён сервер дневника.'); }
 }
 
+function reloadForAccount(destination) {
+  skipBookOnReload(destination);
+  location.replace(location.pathname + location.search + destination);
+  location.reload();
+}
+
 export function signOut() {
   localStorage.removeItem(key);
-  location.replace(location.pathname + location.search + '#/');
-  location.reload();
+  reloadForAccount('#/');
 }
 
 export async function renewSession() {
@@ -116,8 +126,7 @@ export function loginForm(destination) {
         body: { email: identity, password: secret, passwordConfirm: secret } });
       const session = await request('collections/users/auth-with-password', { method: 'POST', body: { identity, password: secret } });
       localStorage.setItem(key, JSON.stringify({ id: session.record.id, email: session.record.email, token: session.token }));
-      location.replace(location.pathname + location.search + destination);
-      location.reload();
+      reloadForAccount(destination);
     } catch (e) {
       message.textContent = e.status === 400 ? (register ? 'Проверьте почту и пароль. Если аккаунт уже существует, войдите.' : 'Проверьте почту и пароль.') : e.message;
     } finally {
