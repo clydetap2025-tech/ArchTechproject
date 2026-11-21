@@ -1,3 +1,5 @@
+import { isMessage, setAttribute, uiTextNode } from './i18n.js';
+
 // Small shared helpers: math, seeded random, colors, DOM, dates.
 
 export const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -109,11 +111,13 @@ export function h(tag, props, ...kids) {
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'html') el.innerHTML = v;
     else if (k === 'value') el.value = v;
+    else if (isMessage(v)) setAttribute(el, k, v);
     else el.setAttribute(k, v === true ? '' : v);
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
-    el.append(kid instanceof Node ? kid : String(kid));
+    if (isMessage(kid)) el.append(uiTextNode(kid));
+    else el.append(kid instanceof Node ? kid : String(kid));
   }
   return el;
 }

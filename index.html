@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DayTrace — дневник атмосферы дня</title>
-  <meta name="description" content="Личный дневник, который превращает текст, фото и песню дня в живое воспоминание.">
+  <title data-ui>DayTrace — дневник атмосферы дня</title>
+  <meta name="description" data-ui-attrs="content" content="Личный дневник, который превращает текст, фото и песню дня в живое воспоминание.">
   <link rel="icon" href="brand.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
   <link rel="stylesheet" href="css/archive.css">
@@ -22,26 +22,26 @@
       </filter>
     </defs>
   </svg>
-  <a class="skip" href="#view">К содержимому</a>
+  <a class="skip" href="#view" data-ui>К содержимому</a>
   <header class="topbar">
-    <a class="brand" href="#/" aria-label="DayTrace — на главную">
+    <a class="brand" href="#/" aria-label="DayTrace — на главную" data-ui-attrs="aria-label">
       <img class="brand-mark" src="brand.svg" width="38" height="38" alt="">
       <span class="brand-name">Day<span>Trace</span></span>
     </a>
-    <nav class="nav" aria-label="Основная навигация">
-      <a href="#/archive" data-nav>Архив</a>
-      <a href="#/account" id="account-link" data-nav>Войти</a>
+    <nav class="nav" aria-label="Основная навигация" data-ui-attrs="aria-label">
+      <a href="#/archive" data-nav data-ui>Архив</a>
+      <a href="#/account" id="account-link" data-nav data-ui>Войти</a>
     </nav>
   </header>
   <main id="view" tabindex="-1">
     <section id="startup" class="wrap startup" aria-live="polite">
-      <p class="muted" id="startup-status">Открываю дневник…</p>
-      <p id="startup-help" hidden><a class="btn" id="startup-link" href="http://localhost:8080/">Открыть локальный дневник</a></p>
+      <p class="muted" id="startup-status" data-ui>Открываю дневник…</p>
+      <p id="startup-help" hidden><a class="btn" id="startup-link" href="http://localhost:8080/" data-ui>Открыть локальный дневник</a></p>
       <noscript><p>Включите JavaScript, чтобы открыть дневник.</p></noscript>
     </section>
   </main>
   <div id="toast" class="toasts" aria-live="polite"></div>
-  <dialog class="book-intro" id="book-intro" aria-label="Дневник открывается">
+  <dialog class="book-intro" id="book-intro" aria-label="Дневник открывается" data-ui-attrs="aria-label">
     <div class="book-stage" aria-hidden="true">
       <div class="book-shadow"></div>
       <div class="book-model">
@@ -56,7 +56,7 @@
           <div class="book-lining"></div>
           <div class="book-board book-cloth">
             <div class="book-foil">
-              <span class="book-imprint">Личный дневник</span>
+              <span class="book-imprint" data-ui>Личный дневник</span>
               <span class="book-title">Day<i>Trace</i></span>
               <img class="book-emblem" src="brand.svg" width="100" height="100" alt="">
             </div>
@@ -64,7 +64,7 @@
         </div>
       </div>
     </div>
-    <button type="button" class="book-skip" autofocus>Пропустить <span aria-hidden="true">→</span></button>
+    <button type="button" class="book-skip" autofocus><span data-ui>Пропустить</span> <span aria-hidden="true">→</span></button>
   </dialog>
   <script>
     const startup = document.getElementById('startup');

@@ -225,7 +225,7 @@
 .album-print-featured {
   display: block; min-height: 0; padding: 0; border: 0;
 }
-.album-print-featured .album-photo { aspect-ratio: 4/3; min-height: 192px; border-width: 7px; }
+.album-print-featured .album-photo { width: 100%; aspect-ratio: 4/3; border-width: 7px; }
 .album-print-featured .album-caption { padding: 13px 20px 0 0; }
 .album-print-featured .album-caption h4 { font-size: clamp(25px, 3vw, 45px); }
 .album-print-featured .album-open { position: absolute; bottom: 1px; right: 1px; font-size: 19px; }
@@ -259,7 +259,6 @@
   .album-meta { gap: 3px 7px; }
   .album-spread { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .album-spread .album-leaf { padding: 19px; }
-  .album-print-featured .album-photo { min-height: 0; }
   .album-index-page { border-left: 0; border-top: 1px solid #86745362; }
   .album-print { grid-template-columns: minmax(74px, .52fr) minmax(0, 1fr) 16px; }
   .album-caption h4 { font-size: 20px; }

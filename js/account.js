@@ -1,6 +1,7 @@
 import { accountServer } from './account-config.js';
 import { h } from './util.js';
 import { skipBookOnReload } from './book-intro.js';
+import { setAttribute as setUiAttribute, setText, translate, ui } from './i18n.js';
 
 const key = 'pv:account:' + accountServer;
 function readSession() {
@@ -33,7 +34,7 @@ export async function request(path, { method = 'GET', body, token = account?.tok
   if (!response.ok) {
     if (response.status === 401 && account && token === account.token) signOut();
     const error = new Error(response.status === 413 ? 'Файлы слишком большие для сервера.' :
-      'Не удалось выполнить запрос к дневнику (' + response.status + ').');
+      translate('Не удалось выполнить запрос к дневнику ({status}).', { status: response.status }));
     error.status = response.status;
     throw error;
   }
@@ -73,18 +74,18 @@ export function loginForm(destination) {
   const description = h('p', { class: 'auth-description' });
   const email = h('input', {
     type: 'email', id: 'account-email', name: 'email', required: true, autocomplete: 'email',
-    placeholder: 'Электронная почта', autocapitalize: 'none', spellcheck: 'false',
+    placeholder: ui('Электронная почта'), autocapitalize: 'none', spellcheck: 'false',
   });
   const password = h('input', {
-    type: 'password', id: 'account-password', name: 'password', required: true, placeholder: 'Пароль',
+    type: 'password', id: 'account-password', name: 'password', required: true, placeholder: ui('Пароль'),
   });
   const reveal = h('button', { class: 'auth-reveal', type: 'button', 'aria-controls': password.id, onclick: () => {
     const visible = password.type === 'password';
     password.type = visible ? 'text' : 'password';
-    reveal.textContent = visible ? 'Скрыть' : 'Показать';
-    reveal.setAttribute('aria-label', visible ? 'Скрыть пароль' : 'Показать пароль');
-  } }, 'Показать');
-  const passwordHint = h('p', { id: 'auth-password-hint', class: 'auth-hint', hidden: true }, 'От 8 символов');
+    setText(reveal, ui(visible ? 'Скрыть' : 'Показать'));
+    setUiAttribute(reveal, 'aria-label', ui(visible ? 'Скрыть пароль' : 'Показать пароль'));
+  } }, ui('Показать'));
+  const passwordHint = h('p', { id: 'auth-password-hint', class: 'auth-hint', hidden: true }, ui('От 8 символов'));
   const submit = h('button', { class: 'auth-submit', type: 'submit' });
   const message = h('p', { class: 'auth-message', role: 'status' });
   const switchText = h('span');
@@ -95,14 +96,14 @@ export function loginForm(destination) {
     title.focus({ preventScroll: true });
   } });
   function render() {
-    title.textContent = register ? 'Создать аккаунт' : 'Вход в дневник';
-    description.textContent = register ? 'Сохраняйте свои дни и возвращайтесь к ним.' : 'Войдите, чтобы открыть свои записи.';
-    submit.textContent = register ? 'Зарегистрироваться' : 'Войти';
-    switchText.textContent = register ? 'Уже есть аккаунт?' : 'Нет аккаунта?';
-    toggle.textContent = register ? 'Войти' : 'Создать аккаунт';
+    setText(title, ui(register ? 'Создать аккаунт' : 'Вход в дневник'));
+    setText(description, ui(register ? 'Сохраняйте свои дни и возвращайтесь к ним.' : 'Войдите, чтобы открыть свои записи.'));
+    setText(submit, ui(register ? 'Зарегистрироваться' : 'Войти'));
+    setText(switchText, ui(register ? 'Уже есть аккаунт?' : 'Нет аккаунта?'));
+    setText(toggle, ui(register ? 'Войти' : 'Создать аккаунт'));
     password.type = 'password';
-    reveal.textContent = 'Показать';
-    reveal.setAttribute('aria-label', 'Показать пароль');
+    setText(reveal, ui('Показать'));
+    setUiAttribute(reveal, 'aria-label', ui('Показать пароль'));
     password.autocomplete = register ? 'new-password' : 'current-password';
     password.minLength = register ? 8 : 1;
     passwordHint.hidden = !register;
@@ -117,7 +118,7 @@ export function loginForm(destination) {
     submit.disabled = toggle.disabled = true;
     email.readOnly = password.readOnly = true;
     form.setAttribute('aria-busy', 'true');
-    submit.textContent = register ? 'Создаём аккаунт…' : 'Входим…';
+    setText(submit, ui(register ? 'Создаём аккаунт…' : 'Входим…'));
     message.textContent = '';
     try {
       const identity = email.value.trim();
@@ -128,17 +129,19 @@ export function loginForm(destination) {
       localStorage.setItem(key, JSON.stringify({ id: session.record.id, email: session.record.email, token: session.token }));
       reloadForAccount(destination);
     } catch (e) {
-      message.textContent = e.status === 400 ? (register ? 'Проверьте почту и пароль. Если аккаунт уже существует, войдите.' : 'Проверьте почту и пароль.') : e.message;
+      setText(message, ui(e.status === 400
+        ? (register ? 'Проверьте почту и пароль. Если аккаунт уже существует, войдите.' : 'Проверьте почту и пароль.')
+        : e.message));
     } finally {
       submit.disabled = toggle.disabled = false;
       email.readOnly = password.readOnly = false;
       form.removeAttribute('aria-busy');
-      submit.textContent = register ? 'Зарегистрироваться' : 'Войти';
+      setText(submit, ui(register ? 'Зарегистрироваться' : 'Войти'));
     }
   } },
-  h('div', { class: 'auth-field' }, h('label', { for: email.id, class: 'visually-hidden' }, 'Электронная почта'), email),
+  h('div', { class: 'auth-field' }, h('label', { for: email.id, class: 'visually-hidden' }, ui('Электронная почта')), email),
   h('div', null,
-    h('div', { class: 'auth-field auth-password' }, h('label', { for: password.id, class: 'visually-hidden' }, 'Пароль'), password, reveal),
+    h('div', { class: 'auth-field auth-password' }, h('label', { for: password.id, class: 'visually-hidden' }, ui('Пароль')), password, reveal),
     passwordHint),
   message, submit);
   return h('section', { class: 'auth-screen', 'aria-labelledby': title.id },
