@@ -1,3 +1,5 @@
 # не нужно на сайте: локальный сервер и настройки
 serve.ps1
+accounts.ps1
+pb_migrations/
 .claude/

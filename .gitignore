@@ -1,6 +1,8 @@
 # локальные настройки и служебное
 .claude/
 .vercel/
+dist/
+pb_data/
 Thumbs.db
 desktop.ini
 .DS_Store

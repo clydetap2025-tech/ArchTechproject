@@ -15,6 +15,7 @@ export function dayFiles(day, comp, { cover, video } = {}) {
   files.push(['песня.json', enc(JSON.stringify({
     artist: meta.artist || null, title: meta.title || day.song?.query || null, year: meta.year || null, genre: meta.genre || null,
     link: day.song?.link || meta.trackViewUrl || null, preview: meta.previewUrl || null,
+    ...(meta.license ? { license: meta.license, licenseUrl: meta.licenseUrl, edit: 'В воспоминании используется зацикленный фрагмент.' } : {}),
     note: 'Сама песня не хранится: только ссылка и её «отпечаток» для оформления.',
     fingerprint: { bpm: Mu.bpm, key: Mu.key, energy: Mu.energy, brightness: Mu.brightness, source: Mu.source },
   }, null, 2))]);

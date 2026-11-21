@@ -2,6 +2,9 @@
 # Usage: powershell -ExecutionPolicy Bypass -File serve.ps1 [-Port 8080]
 param([int]$Port = 8080)
 
+try { $null = Invoke-RestMethod 'http://127.0.0.1:8090/api/health' -TimeoutSec 2 -ErrorAction Stop }
+catch { & (Join-Path $PSScriptRoot 'accounts.ps1') -WebPort $Port }
+
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
@@ -13,6 +16,7 @@ $mime = @{
   '.css' = 'text/css; charset=utf-8'; '.json' = 'application/json; charset=utf-8';
   '.svg' = 'image/svg+xml'; '.png' = 'image/png'; '.jpg' = 'image/jpeg'; '.webp' = 'image/webp';
   '.ico' = 'image/x-icon'; '.md' = 'text/markdown; charset=utf-8'; '.txt' = 'text/plain; charset=utf-8'
+  '.mp4' = 'video/mp4'; '.woff2' = 'font/woff2'
 }
 
 try {

@@ -1,4 +1,5 @@
-// Local-first storage: every day lives in IndexedDB in this browser (nothing is uploaded anywhere).
+import { account } from './account.js';
+import { cloudDay, cloudSave, cloudList, cloudDelete } from './cloud-days.js';
 const DB = 'pogoda-vnutri', VER = 1;
 let dbp = null;
 
@@ -39,12 +40,31 @@ function tx(store, mode, fn) {
   }));
 }
 
-export const putDay = day => tx('days', 'readwrite', s => s.put(day));
-export const getDay = id => tx('days', 'readonly', s => s.get(id));
-export const allDays = () => tx('days', 'readonly', s => s.getAll());
-export const deleteDay = id => tx('days', 'readwrite', s => s.delete(id));
-export const kvGet = k => tx('kv', 'readonly', s => s.get(k));
-export const kvSet = (k, v) => tx('kv', 'readwrite', s => s.put(v, k));
+const localDays = () => tx('days', 'readonly', s => s.getAll());
+export async function putDay(day) {
+  if (account) return cloudSave(day);
+  if (!day.demoKey) throw new Error('Войдите, чтобы сохранить день.');
+  return tx('days', 'readwrite', s => s.put(day));
+}
+export async function getDay(id) {
+  if (account) return cloudDay(id);
+  const day = await tx('days', 'readonly', s => s.get(id));
+  return day?.demoKey ? day : null;
+}
+export const allDays = async () => account ? cloudList() : (await localDays()).filter(day => day.demoKey);
+export async function deleteDay(id) {
+  if (account) return cloudDelete(id);
+  if (await getDay(id)) await tx('days', 'readwrite', s => s.delete(id));
+}
+export const legacyDays = async () => account ? (await localDays()).filter(day => !day.demoKey) : [];
+export async function moveLegacyDay(day) {
+  if (!account) throw new Error('Войдите в дневник.');
+  if (!await cloudDay(day.id)) await cloudSave(day);
+  await tx('days', 'readwrite', s => s.delete(day.id));
+}
+const scoped = k => (account ? account.id + ':' : 'guest:') + k;
+export const kvGet = k => tx('kv', 'readonly', s => s.get(scoped(k)));
+export const kvSet = (k, v) => tx('kv', 'readwrite', s => s.put(v, scoped(k)));
 
-export function getSetting(k, def = '') { try { return localStorage.getItem('pv:' + k) ?? def; } catch { return def; } }
-export function setSetting(k, v) { try { localStorage.setItem('pv:' + k, v); } catch { /* private mode */ } }
+export function getSetting(k, def = '') { try { return localStorage.getItem('pv:' + scoped(k)) ?? def; } catch { return def; } }
+export function setSetting(k, v) { try { localStorage.setItem('pv:' + scoped(k), v); } catch { /* private mode */ } }
