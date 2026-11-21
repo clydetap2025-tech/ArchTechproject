@@ -3,6 +3,7 @@
 // the preview URL and the analysed "fingerprint".
 import { decodeAudio, analyzeAudio } from './audio.js';
 import { norm } from './util.js';
+import { photoTrack } from './photo-tracks.js';
 
 export function parseLink(url) {
   const u = String(url || '').trim();
@@ -17,13 +18,22 @@ export function parseLink(url) {
 
 function photoMusicSearch({ lum, contrast, sat, warmth }) {
   if (lum < .28) return { genre: 'Piano', queries: ['piano nocturne', 'quiet piano'],
-    reason: 'Тени на фото подсказали камерное фортепиано.' };
+    tracks: ['night-docks', 'evening-fall', 'space-jazz', 'hard-boiled'],
+    reason: 'Тени на фото подсказали камерное фортепиано и ночной джаз.' };
   if (sat > .48 && contrast > .19) return { genre: 'Jazz', queries: ['jazz swing instrumental', 'jazz piano'],
+    tracks: ['casa-bossa', 'carefree', 'hard-boiled', 'space-jazz'],
     reason: 'Насыщенные цвета и контраст подсказали музыку с заметным ритмом.' };
   if (warmth > .065) return { genre: 'Acoustic folk', queries: ['acoustic guitar instrumental', 'folk guitar instrumental'],
+    tracks: ['clear-air', 'laid-back-guitars', 'easy-lemon', 'carefree'],
     reason: 'К тёплой палитре подошла акустическая гитара.' };
   return { genre: 'Piano', queries: ['quiet piano', 'piano nocturne'],
+    tracks: ['gymnopedie', 'dream-culture', 'luminous-rain', 'cool-vibes'],
     reason: 'Ровному свету и сдержанным цветам подошла мягкая инструментальная музыка.' };
+}
+
+export function suggestMusicForPhotos(stats) {
+  const { tracks, reason } = photoMusicSearch(stats);
+  return tracks.map(id => photoTrack(id, reason));
 }
 
 function metadataText(field) {
@@ -70,6 +80,24 @@ async function commonsTracks(query, genre, signal) {
 export async function findMusicForPhotos(stats, cancellation = new AbortController().signal) {
   const { queries, genre, reason } = photoMusicSearch(stats);
   const signal = AbortSignal.any([cancellation, AbortSignal.timeout(22000)]);
+  const trySong = async song => {
+    try {
+      const buffer = await loadSongBuffer(song, signal);
+      if (buffer?.duration >= 12 && buffer.duration <= 600) {
+        const music = analyzeAudio(buffer);
+        if (music) return { song, music };
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn('Music candidate unavailable', error);
+    }
+    return null;
+  };
+  for (const song of suggestMusicForPhotos(stats)) {
+    signal.throwIfAborted();
+    const result = await trySong({ ...song, autoPicked: true });
+    if (result) return result;
+  }
   const tried = new Set();
   for (const query of queries) {
     signal.throwIfAborted();
@@ -81,19 +109,11 @@ export async function findMusicForPhotos(stats, cancellation = new AbortControll
     for (const candidate of candidates.slice(0, 5)) {
       if (tried.has(candidate.previewUrl)) continue;
       tried.add(candidate.previewUrl);
-      try {
-        const { rank, ...meta } = candidate;
-        const song = { link: meta.trackViewUrl, query: [meta.artist, meta.title].filter(Boolean).join(' — '),
-          service: meta.source, meta, autoPicked: true, reason };
-        const buffer = await loadSongBuffer(song, signal);
-        if (buffer?.duration >= 12 && buffer.duration <= 600) {
-          const music = analyzeAudio(buffer);
-          if (music) return { song, music };
-        }
-      } catch (error) {
-        signal.throwIfAborted();
-        console.warn('Music candidate unavailable', error);
-      }
+      const { rank, ...meta } = candidate;
+      const song = { link: meta.trackViewUrl, query: [meta.artist, meta.title].filter(Boolean).join(' — '),
+        service: meta.source, meta, autoPicked: true, reason };
+      const result = await trySong(song);
+      if (result) return result;
     }
   }
   throw new Error('Не удалось найти доступную музыку по фото. Попробуйте снова или укажите свою песню');
@@ -170,11 +190,14 @@ export async function loadSongBuffer(song, signal) {
   return buf;
 }
 
-export async function analyzeSong(song) {
+export async function analyzeSong(song, signal) {
   try {
-    const buf = await loadSongBuffer(song);
+    const buf = await loadSongBuffer(song, signal);
     if (buf) { const f = analyzeAudio(buf); if (f) return f; }
-  } catch (e) { console.warn('audio analysis failed', e); }
+  } catch (e) {
+    signal?.throwIfAborted();
+    console.warn('audio analysis failed', e);
+  }
   return describeFeatures(song.meta);
 }
 

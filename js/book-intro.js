@@ -1,8 +1,9 @@
+import { motionEnabled, watchMotion } from './preferences.js';
+
 const dialog = document.getElementById('book-intro');
 const model = dialog.querySelector('.book-model');
 const lid = dialog.querySelector('.book-lid');
 const shadow = dialog.querySelector('.book-shadow');
-const motion = matchMedia('(prefers-reduced-motion: reduce)');
 const skipArrivalKey = 'pv:skip-book-arrival';
 const leaves = [];
 let frame = 0;
@@ -76,7 +77,7 @@ export function openBook() {
     sessionStorage.removeItem(skipArrivalKey);
     if (skipArrival) return;
   } catch { /* Storage is optional. */ }
-  if (location.hash === '#/archive' || motion.matches || document.hidden || dialog.open ||
+  if (location.hash === '#/archive' || !motionEnabled('book') || document.hidden || dialog.open ||
       typeof dialog.showModal !== 'function') return;
   if (!leaves.length) bindLeaves();
   const duration = 2350;
@@ -97,6 +98,6 @@ export function openBook() {
 dialog.querySelector('.book-skip').addEventListener('click', finish);
 dialog.addEventListener('keydown', event => event.stopPropagation());
 dialog.addEventListener('cancel', event => { event.preventDefault(); finish(); });
-motion.addEventListener('change', () => { if (motion.matches) finish(); });
+watchMotion('book', () => { if (!motionEnabled('book')) finish(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) finish(); });
 window.addEventListener('pagehide', finish);

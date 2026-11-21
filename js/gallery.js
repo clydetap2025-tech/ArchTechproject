@@ -1,5 +1,7 @@
 import { h } from './util.js';
 import { landscapeURL } from './weather.js';
+import { motionEnabled, watchMotion } from './preferences.js';
+import { ui } from './i18n.js';
 
 export function scenery({ particles = true } = {}) {
   return h('div', { class: 'scenery', 'aria-hidden': 'true' },
@@ -28,13 +30,12 @@ export function animateScenery(scene, onCleanup) {
   const book = document.getElementById('book-intro');
   const video = h('video', { class: 'scenery-video', muted: true, loop: true, playsinline: true, preload: 'none' });
   video.muted = true;
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   let visible = false;
 
   function sync() {
     const { scene: season, motion } = scene.dataset;
     const next = motion === 'rain' && season !== 'winter' ? 'rain' : season;
-    const enabled = !reduced.matches;
+    const enabled = motionEnabled('background');
     video.poster = sceneryMedia(next, 'jpg');
     scene.style.setProperty('--scenery-poster', `url("${video.poster}"), var(--landscape)`);
     if (!enabled || !visible || document.hidden || book.open) {
@@ -57,12 +58,12 @@ export function animateScenery(scene, onCleanup) {
   visibility.observe(scene);
   document.addEventListener('visibilitychange', sync);
   book.addEventListener('close', sync);
-  reduced.addEventListener('change', sync);
+  const stopWatchingMotion = watchMotion('background', sync);
   onCleanup(() => {
     visibility.disconnect();
     document.removeEventListener('visibilitychange', sync);
     book.removeEventListener('close', sync);
-    reduced.removeEventListener('change', sync);
+    stopWatchingMotion();
     video.pause();
     video.removeAttribute('src');
     video.load();
@@ -71,8 +72,8 @@ export function animateScenery(scene, onCleanup) {
 }
 
 export function memoryGallery(items) {
-  const previous = h('button', { class: 'gallery-arrow', type: 'button', 'aria-label': 'Предыдущая карточка' }, '←');
-  const next = h('button', { class: 'gallery-arrow', type: 'button', 'aria-label': 'Следующая карточка' }, '→');
+  const previous = h('button', { class: 'gallery-arrow', type: 'button', 'aria-label': ui('Предыдущая карточка') }, '←');
+  const next = h('button', { class: 'gallery-arrow', type: 'button', 'aria-label': ui('Следующая карточка') }, '→');
   const position = h('span', { class: 'gallery-count', 'aria-live': 'polite' });
   const cards = items.map(item => h(item.href ? 'a' : 'button', {
     class: 'memory-card', href: item.href, type: item.href ? null : 'button', onclick: item.action, 'aria-label': item.title,
@@ -136,7 +137,7 @@ export function memoryGallery(items) {
     lastWheel = now;
     move(delta > 0 ? 1 : -1);
   }, { passive: false });
-  const gallery = h('section', { class: 'memory-gallery', 'aria-label': 'Галерея воспоминаний' }, track,
+  const gallery = h('section', { class: 'memory-gallery', 'aria-label': ui('Галерея воспоминаний') }, track,
     h('div', { class: 'gallery-controls', hidden: cards.length < 2 }, previous, position, next));
   gallery.addEventListener('keydown', event => {
     if (cards.length < 2 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
