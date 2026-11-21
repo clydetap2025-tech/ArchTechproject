@@ -15,6 +15,90 @@ export function parseLink(url) {
   return { url: u, service: s ? s[1] : 'ссылка' };
 }
 
+function photoMusicSearch({ lum, contrast, sat, warmth }) {
+  if (lum < .28) return { genre: 'Piano', queries: ['piano nocturne', 'quiet piano'],
+    reason: 'Тени на фото подсказали камерное фортепиано.' };
+  if (sat > .48 && contrast > .19) return { genre: 'Jazz', queries: ['jazz swing instrumental', 'jazz piano'],
+    reason: 'Насыщенные цвета и контраст подсказали музыку с заметным ритмом.' };
+  if (warmth > .065) return { genre: 'Acoustic folk', queries: ['acoustic guitar instrumental', 'folk guitar instrumental'],
+    reason: 'К тёплой палитре подошла акустическая гитара.' };
+  return { genre: 'Piano', queries: ['quiet piano', 'piano nocturne'],
+    reason: 'Ровному свету и сдержанным цветам подошла мягкая инструментальная музыка.' };
+}
+
+function metadataText(field) {
+  const fragment = document.createElement('template');
+  fragment.innerHTML = field?.value || '';
+  return fragment.content.textContent.replace(/\s+/g, ' ').trim();
+}
+
+async function commonsTracks(query, genre, signal) {
+  const params = new URLSearchParams({
+    action: 'query', generator: 'search', gsrnamespace: '6', gsrlimit: '18',
+    gsrsearch: 'filetype:audio ' + query, prop: 'imageinfo', iiprop: 'url|size|mime|extmetadata',
+    iiextmetadatafilter: 'LicenseShortName|LicenseUrl|Artist',
+    format: 'json', formatversion: '2', origin: '*',
+  });
+  const response = await fetch('https://commons.wikimedia.org/w/api.php?' + params, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(6500)]),
+  });
+  if (!response.ok) return [];
+  const { query: result } = await response.json();
+  return (result?.pages || []).flatMap(page => {
+    const file = page.imageinfo?.[0];
+    if (!file?.url?.startsWith('https://upload.wikimedia.org/wikipedia/commons/') ||
+        !file.descriptionurl?.startsWith('https://commons.wikimedia.org/wiki/File:') ||
+        file.size < 180000 || file.size > 9 * 1024 * 1024 ||
+        !/\.(mp3|ogg|oga|opus|wav)$/i.test(new URL(file.url).pathname)) return [];
+    const license = metadataText(file.extmetadata?.LicenseShortName);
+    const artist = metadataText(file.extmetadata?.Artist).slice(0, 160);
+    const licenseUrl = metadataText(file.extmetadata?.LicenseUrl);
+    const licensed = /^(?:CC0|Public domain)$/i.test(license) ||
+      (artist && /^CC BY [0-9]/i.test(license) && /^https:\/\/creativecommons\.org\/licenses\/by\//.test(licenseUrl));
+    if (!licensed) return [];
+    const preview = new URL(file.url);
+    preview.search = '';
+    const title = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').slice(0, 140);
+    return [{
+      artist, title, genre, license, licenseUrl: /^https:\/\/creativecommons\.org\//.test(licenseUrl) ? licenseUrl : null,
+      previewUrl: preview.href, trackViewUrl: file.descriptionurl, source: 'Wikimedia Commons',
+      rank: (page.index || 1) - (file.mime === 'audio/mpeg' ? 6 : 0),
+    }];
+  }).sort((a, b) => a.rank - b.rank);
+}
+
+export async function findMusicForPhotos(stats, cancellation = new AbortController().signal) {
+  const { queries, genre, reason } = photoMusicSearch(stats);
+  const signal = AbortSignal.any([cancellation, AbortSignal.timeout(22000)]);
+  const tried = new Set();
+  for (const query of queries) {
+    signal.throwIfAborted();
+    const candidates = await commonsTracks(query, genre, signal).catch(error => {
+      signal.throwIfAborted();
+      console.warn('Music catalogue unavailable', error);
+      return [];
+    });
+    for (const candidate of candidates.slice(0, 5)) {
+      if (tried.has(candidate.previewUrl)) continue;
+      tried.add(candidate.previewUrl);
+      try {
+        const { rank, ...meta } = candidate;
+        const song = { link: meta.trackViewUrl, query: [meta.artist, meta.title].filter(Boolean).join(' — '),
+          service: meta.source, meta, autoPicked: true, reason };
+        const buffer = await loadSongBuffer(song, signal);
+        if (buffer?.duration >= 12 && buffer.duration <= 600) {
+          const music = analyzeAudio(buffer);
+          if (music) return { song, music };
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        console.warn('Music candidate unavailable', error);
+      }
+    }
+  }
+  throw new Error('Не удалось найти доступную музыку по фото. Попробуйте снова или укажите свою песню');
+}
+
 // Best effort: official oEmbed endpoints give a track title for YouTube / Spotify links.
 export async function titleFromLink(link) {
   const p = parseLink(link);
@@ -66,14 +150,22 @@ export async function searchSong(query) {
 
 const audioCache = new Map();
 
-export async function loadSongBuffer(song) {
+export async function loadSongBuffer(song, signal) {
   const key = song.fileBlob ? 'file:' + (song.fileName || '') + song.fileBlob.size : song.meta?.previewUrl;
   if (!key) return null;
   if (audioCache.has(key)) return audioCache.get(key);
   let ab;
   if (song.fileBlob) ab = await song.fileBlob.arrayBuffer();
-  else { const r = await fetch(https(song.meta.previewUrl)); if (!r.ok) throw new Error('preview ' + r.status); ab = await r.arrayBuffer(); }
+  else {
+    const timeout = AbortSignal.timeout(8500);
+    const r = await fetch(https(song.meta.previewUrl), { signal: signal ? AbortSignal.any([timeout, signal]) : timeout });
+    if (!r.ok) throw new Error('preview ' + r.status);
+    ab = await r.arrayBuffer();
+  }
+  signal?.throwIfAborted();
   const buf = await decodeAudio(ab);
+  signal?.throwIfAborted();
+  if (audioCache.size >= 3) audioCache.delete(audioCache.keys().next().value);
   audioCache.set(key, buf);
   return buf;
 }

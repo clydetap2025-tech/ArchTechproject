@@ -1,11 +1,11 @@
 import { h } from './util.js';
 import { landscapeURL } from './weather.js';
 
-export function scenery(className = '') {
-  const scene = h('div', { class: `scenery ${className}`, 'aria-hidden': 'true' },
+export function scenery({ particles = true } = {}) {
+  return h('div', { class: 'scenery', 'aria-hidden': 'true' },
     h('div', { class: 'scenery-photo' }),
-    h('div', { class: 'scenery-canopy' }),
-    h('div', { class: 'scenery-particles' }, Array.from({ length: 24 }, (_, index) => {
+    particles && h('div', { class: 'scenery-canopy' }),
+    particles && h('div', { class: 'scenery-particles' }, Array.from({ length: 24 }, (_, index) => {
       const particle = h('i');
       particle.style.setProperty('--x', `${(index * 37 + 8) % 100}%`);
       particle.style.setProperty('--y', `${(index * 61 + 19) % 100}%`);
@@ -14,13 +14,67 @@ export function scenery(className = '') {
       particle.style.setProperty('--delay', `${-(index * 7) % 19}s`);
       return particle;
     })));
-  return scene;
 }
+
+const sceneryMedia = (name, type) => new URL(`../demo/scenery/${name}.${type}`, import.meta.url).href;
 
 export function setScenery(scene, theme) {
   scene.dataset.scene = theme.scene;
   scene.dataset.motion = theme.motion;
   scene.style.setProperty('--landscape', `url("${landscapeURL(theme.scene)}")`);
+}
+
+export function animateScenery(scene, onCleanup) {
+  const video = h('video', { class: 'scenery-video', muted: true, loop: true, playsinline: true, preload: 'none' });
+  video.muted = true;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  let visible = false, paused = false;
+  const icon = h('span', { 'aria-hidden': 'true' });
+  const toggle = h('button', { type: 'button', class: 'btn small scenery-toggle', onclick: () => {
+    paused = !paused;
+    sync();
+  } }, icon);
+
+  function sync() {
+    const { scene: season, motion } = scene.dataset;
+    const next = motion === 'rain' && season !== 'winter' ? 'rain' : season;
+    const enabled = !reduced.matches;
+    const label = paused ? 'Включить анимацию фона' : 'Приостановить анимацию фона';
+    toggle.hidden = !enabled;
+    toggle.title = label;
+    toggle.setAttribute('aria-label', label);
+    icon.textContent = paused ? '▶' : '⏸';
+    video.poster = sceneryMedia(next, 'jpg');
+    scene.style.setProperty('--scenery-poster', `url("${video.poster}"), var(--landscape)`);
+    if (!enabled || paused || !visible || document.hidden) {
+      video.pause();
+      if (!enabled || video.dataset.scene !== next) video.classList.remove('is-playing');
+      return;
+    }
+    if (video.dataset.scene !== next) {
+      video.classList.remove('is-playing');
+      video.dataset.scene = next;
+      video.src = sceneryMedia(next, 'mp4');
+    }
+    if (video.paused) video.play().catch(() => { /* The still frame is available if autoplay fails. */ });
+  }
+
+  video.addEventListener('playing', () => video.classList.add('is-playing'));
+  video.addEventListener('error', () => video.classList.remove('is-playing'));
+  scene.querySelector('.scenery-photo').after(video);
+  const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync(); });
+  visibility.observe(scene);
+  document.addEventListener('visibilitychange', sync);
+  reduced.addEventListener('change', sync);
+  onCleanup(() => {
+    visibility.disconnect();
+    document.removeEventListener('visibilitychange', sync);
+    reduced.removeEventListener('change', sync);
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  });
+  return { toggle, sync };
 }
 
 export function memoryGallery(items) {

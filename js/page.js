@@ -7,8 +7,7 @@ export const PW = 1080, PH = 1920;
 const M = 66, W = PW - 2 * M;
 const MARK = '#f9f6ee', SECONDARY = '#d6d4cc';
 const INK = '#1e2723', PAPER = '#f2efe7', DETAIL = '#505951';
-const SERIF = 'Literata, Georgia, serif', SANS = 'Manrope, system-ui';
-const MONO = '"JetBrains Mono", monospace';
+export const FONT = getComputedStyle(document.documentElement).getPropertyValue('--sans').trim() || 'system-ui, sans-serif';
 const THEME = {
   autumn: [173, 91, 41], winter: [112, 158, 185], rain: [83, 129, 150],
   spring: [94, 140, 92], summer: [164, 142, 89],
@@ -53,10 +52,10 @@ function horizontalRule(ctx, y, color = '#e7f0e350') {
 function masthead(ctx, date, foreground, line) {
   ctx.textAlign = 'left';
   ctx.fillStyle = foreground;
-  ctx.font = '650 27px ' + SANS;
-  ctx.fillText('ПОГОДА ВНУТРИ', M, 98);
+  ctx.font = '600 29px ' + FONT;
+  ctx.fillText('Погода внутри', M, 98);
   ctx.textAlign = 'right';
-  ctx.font = '500 26px ' + MONO;
+  ctx.font = '500 26px ' + FONT;
   ctx.fillText(fmtDateDots(date), PW - M, 98);
   ctx.textAlign = 'left';
   horizontalRule(ctx, 128, line);
@@ -77,10 +76,10 @@ function wrap(ctx, text, width) {
   return lines;
 }
 
-function limitedText(ctx, text, size, maxLines, width, family, weight) {
+function limitedText(ctx, text, size, maxLines, width, weight) {
   let lines;
   for (let px = size; px >= size * .63; px -= 2) {
-    ctx.font = weight + ' ' + px + 'px ' + family;
+    ctx.font = weight + ' ' + px + 'px ' + FONT;
     lines = wrap(ctx, text, width);
     if (lines.length <= maxLines) return { lines, lineHeight: px * 1.11 };
   }
@@ -111,7 +110,7 @@ function coverTitle(ctx, day, comp, bottom) {
   masthead(ctx, day.date, MARK, '#f6f1e969');
 
   const caption = day.meta.caption;
-  const title = limitedText(ctx, day.meta.title, 106, 3, W, SERIF, 500);
+  const title = limitedText(ctx, day.meta.title, 92, 3, W, 600);
   const lastTitle = bottom - (caption ? 146 : 79);
   const firstTitle = lastTitle - (title.lines.length - 1) * title.lineHeight;
   ctx.fillStyle = MARK;
@@ -119,13 +118,13 @@ function coverTitle(ctx, day, comp, bottom) {
 
   const detail = [TIME_RU[comp.mood.light], weatherLabel(day.inputs.weather)].filter(Boolean).join(' · ');
   if (detail) {
-    ctx.font = '600 26px ' + SANS;
+    ctx.font = '600 26px ' + FONT;
     ctx.fillStyle = '#eee0bc';
-    ctx.fillText(detail.toUpperCase(), M, firstTitle - title.lineHeight - 25, W);
+    ctx.fillText(detail, M, firstTitle - title.lineHeight - 25, W);
   }
   if (caption) {
     ctx.fillStyle = SECONDARY;
-    const quote = limitedText(ctx, '«' + caption + '»', 32, 2, W, SERIF, 'italic 400');
+    const quote = limitedText(ctx, '«' + caption + '»', 32, 2, W, 400);
     quote.lines.forEach((line, index) => ctx.fillText(line, M, lastTitle + 57 + index * quote.lineHeight, W));
   }
 }
@@ -134,15 +133,15 @@ function soundtrack(ctx, day) {
   horizontalRule(ctx, 1778);
   const meta = day.song?.meta;
   const song = [meta?.artist, meta?.title || day.song?.query].filter(Boolean).join(' — ');
-  ctx.font = '600 22px ' + MONO;
+  ctx.font = '500 26px ' + FONT;
   ctx.fillStyle = SECONDARY;
-  ctx.fillText('САУНДТРЕК', M, 1824);
+  ctx.fillText('Музыка', M, 1824);
   ctx.textAlign = 'right';
-  ctx.fillText(day.photos.length + ' ФОТО', PW - M, 1824);
+  ctx.fillText(day.photos.length + ' фото', PW - M, 1824);
   ctx.textAlign = 'left';
   if (song) {
     ctx.fillStyle = MARK;
-    ctx.font = '500 34px ' + SANS;
+    ctx.font = '500 34px ' + FONT;
     ctx.fillText(song, M, 1872, W);
   }
 }
@@ -233,7 +232,7 @@ export function drawBackPage(canvas, day, comp) {
   ctx.fillRect(0, 0, PW, PH);
   masthead(ctx, day.date, INK, '#c7c7bd');
   ctx.fillStyle = INK;
-  ctx.font = '500 95px ' + SERIF;
+  ctx.font = '600 88px ' + FONT;
   ctx.fillText('Атмосфера', M, 283, W);
   ctx.fillText('этого дня', M, 392, W);
   ctx.fillStyle = rgbCss(accent);
@@ -254,20 +253,20 @@ export function drawBackPage(canvas, day, comp) {
     ctx.roundRect(x, y, cellW, height, 12);
     ctx.fill();
     ctx.fillStyle = DETAIL;
-    ctx.font = '600 22px ' + MONO;
-    ctx.fillText(item.src.toUpperCase(), textX, y + 46, textW);
-    const sig = limitedText(ctx, item.sig, 33, 2, textW, SANS, 700);
+    ctx.font = '500 26px ' + FONT;
+    ctx.fillText(item.src, textX, y + 46, textW);
+    const sig = limitedText(ctx, item.sig, 33, 2, textW, 600);
     ctx.fillStyle = INK;
     sig.lines.forEach((line, lineIndex) => ctx.fillText(line, textX, y + 96 + sig.lineHeight * lineIndex, textW));
-    const rule = limitedText(ctx, item.rule, 25, 3, textW, SANS, 450);
+    const rule = limitedText(ctx, item.rule, 25, 3, textW, 400);
     ctx.fillStyle = DETAIL;
     const ruleY = y + 134 + (sig.lines.length - 1) * sig.lineHeight;
     rule.lines.forEach((line, lineIndex) => ctx.fillText(line, textX, ruleY + lineIndex * rule.lineHeight, textW));
   });
 
   ctx.fillStyle = DETAIL;
-  ctx.font = '600 22px ' + MONO;
-  ctx.fillText('ПАЛИТРА ДНЯ', M, 1565);
+  ctx.font = '500 26px ' + FONT;
+  ctx.fillText('Палитра дня', M, 1565);
   const palette = comp.style.palette;
   const paletteY = 1602, paletteH = 92, inset = W / (palette.length || 1);
   ctx.save();
@@ -281,7 +280,7 @@ export function drawBackPage(canvas, day, comp) {
   ctx.restore();
   horizontalRule(ctx, 1760, '#c7c7bd');
   ctx.fillStyle = INK;
-  const title = limitedText(ctx, day.meta.title, 42, 2, W, SERIF, 500);
+  const title = limitedText(ctx, day.meta.title, 42, 2, W, 600);
   title.lines.forEach((line, index) => ctx.fillText(line, M, 1823 + title.lineHeight * index, W));
 }
 

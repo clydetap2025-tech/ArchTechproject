@@ -1,21 +1,22 @@
 // App shell: archive, new-day form + pipeline, day viewer (page, sound, voice, "why", mood pad, folder, video).
 import { h, todayISO, fmtDateLong, weekday, clamp, sleep, downloadBlob, uid, rgbHex, canvasBlob, wordCount, TIME_RU, SEASON_RU, rgbCss, plural } from './util.js';
-import { allDays, getDay, putDay, deleteDay, getSetting, setSetting } from './store.js';
+import { allDays, getDay, putDay, deleteDay, getSetting, setSetting, legacyDays, moveLegacyDay } from './store.js';
+import { account, loginForm, signOut, renewSession } from './account.js';
 import { analyzeText } from './text.js';
-import { processPhoto } from './photo.js';
-import { parseLink, titleFromLink, searchSong, analyzeSong, loadSongBuffer } from './music.js';
+import { processPhoto, aggregatePhotos } from './photo.js';
+import { parseLink, titleFromLink, searchSong, analyzeSong, loadSongBuffer, findMusicForPhotos } from './music.js';
 import { computeDay, TECH, TECH_ORDER } from './mood.js';
-import { PageRenderer, renderCover, drawBackPage, PW, PH } from './page.js';
+import { PageRenderer, renderCover, drawBackPage, FONT, PW, PH } from './page.js';
 import { getSound } from './sound.js';
 import { pickVoice, speak, stopSpeaking } from './voice.js';
 import { saveToFolder, canUseFolders, safeName, zipFiles } from './folder.js';
 import { DEMO_DAYS, DEMO_VERSION, loadDemoPhoto } from './demo.js';
 import { atmosphere, deviceLocation, fetchWeatherAt, fetchWeatherByCity, weatherLabel } from './weather.js';
-import { memoryGallery, scenery, setScenery } from './gallery.js';
+import { memoryGallery, scenery, setScenery, animateScenery } from './gallery.js';
 
 const view = document.getElementById('view');
-// Bump when the visual system changes: archive covers re-render themselves in the background.
-const COVER_VER = 7;
+// Version of the rendered day cover saved alongside an entry.
+const COVER_VER = 9;
 let cleanups = [];
 let routeVersion = 0;
 let liveWeather = null;
@@ -24,19 +25,6 @@ let checkedWeatherPermission = false;
 const onCleanup = fn => cleanups.push(fn);
 
 // ---------- helpers ----------
-let fontsP = null;
-function fontsReady() {
-  if (!fontsP) {
-    const sample = 'Аа Яя Ёё 0123';
-    const loading = Promise.all([
-      '300 40px Literata', '500 40px Literata', '800 40px Literata', 'italic 400 40px Literata', 'italic 700 40px Literata',
-      '550 40px Manrope', '400 24px "JetBrains Mono"', '600 24px "JetBrains Mono"',
-    ].map(f => document.fonts.load(f, sample))).catch(() => {});
-    fontsP = Promise.race([loading, sleep(1500)]);
-  }
-  return fontsP;
-}
-
 function toast(msg, kind = '') {
   const t = document.getElementById('toast');
   const el = h('div', { class: 'toast ' + kind, role: kind === 'error' ? 'alert' : 'status' }, msg);
@@ -92,10 +80,17 @@ const STEPS = [
   ['render', 'Собираю страницу и папку дня'],
 ];
 
-async function buildDay(input, step = () => {}) {
+async function buildDay(input, step = () => {}, preparePhoto = processPhoto) {
   step('photos', 'active');
   const photos = [];
-  for (const f of input.photoFiles) photos.push(await processPhoto(f));
+  for (const file of input.photoFiles) {
+    const photo = await preparePhoto(file);
+    if (!input.demoKey) {
+      photo.original = file;
+      photo.originalName = file.name;
+    }
+    photos.push(photo);
+  }
   step('photos', 'done', `${photos.length} фото`);
 
   step('text', 'active');
@@ -103,17 +98,21 @@ async function buildDay(input, step = () => {}) {
   step('text', 'done', 'локальные правила');
 
   step('music', 'active');
-  const song = { link: input.songLink || null, query: input.songQuery || null, service: parseLink(input.songLink)?.service || null, meta: null };
+  let song = { link: input.songLink || null, query: input.songQuery || null, service: parseLink(input.songLink)?.service || null, meta: null };
+  let music;
   if (input.songFile) {
     song.fileBlob = input.songFile; song.fileName = input.songFile.name;
     song.meta = { title: input.songQuery || input.songFile.name.replace(/\.[^.]+$/, ''), artist: '' };
+  } else if (!song.query && !song.link) {
+    step('music', 'active', 'Ищу музыку по фото…');
+    ({ song, music } = await findMusicForPhotos(aggregatePhotos(photos), input.signal));
   } else {
     let q = song.query;
     if (!q && song.link) q = await titleFromLink(song.link);
     if (q) { song.query = q; song.meta = await searchSong(q); }
   }
   if (!song.meta) song.meta = { title: song.query || 'песня дня', artist: '' };
-  const music = await analyzeSong(song);
+  music ||= await analyzeSong(song);
   step('music', 'done', music.source === 'audio' ? `${music.bpm} BPM · ${music.key}` : 'по жанру (превью недоступно)');
 
   let weather = input.weather || null;
@@ -136,10 +135,11 @@ async function buildDay(input, step = () => {}) {
     meta: { title: ta.title, caption: ta.caption, sensory: ta.sensory, ambient: ambient.slice(0, 2) },
     override: null,
   };
+  input.signal?.throwIfAborted();
   const comp = computeDay(day);
-  await fontsReady();
   day.cover = await renderCover(day, comp);
   day.coverVer = COVER_VER;
+  input.signal?.throwIfAborted();
   await putDay(day);
   step('render', 'done', `«${day.meta.title}»`);
   return day;
@@ -172,7 +172,6 @@ async function upgradeDemo(day) {
       const photos = [];
       for (const name of example.photos) photos.push(await processPhoto(await loadDemoPhoto(name)));
       const updated = { ...day, photos, demoKey: example.date, demoVersion: DEMO_VERSION };
-      await fontsReady();
       updated.cover = await renderCover(updated, computeDay(updated));
       updated.coverVer = COVER_VER;
       await putDay(updated);
@@ -185,6 +184,29 @@ async function upgradeDemo(day) {
 }
 
 // ---------- router ----------
+document.getElementById('account-link').textContent = account ? 'Аккаунт' : 'Войти';
+async function viewAccount(current) {
+  if (!account) { view.replaceChildren(loginForm('#/')); return; }
+  const section = h('section', { class: 'wrap account-panel' },
+    h('h1', { class: 'h1' }, 'Мой аккаунт'), h('p', null, account.email),
+    h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/archive' }, 'Мой архив'),
+      h('button', { class: 'btn', type: 'button', onclick: signOut }, 'Выйти')));
+  view.replaceChildren(section);
+  const previous = await legacyDays();
+  if (!current() || !previous.length) return;
+  const status = h('p', { class: 'muted', role: 'status' }, 'На этом устройстве есть записи, созданные до появления аккаунтов.');
+  const move = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    if (!confirm('Перенести прежние записи с этого устройства в аккаунт ' + account.email + '?')) return;
+    move.disabled = true;
+    try {
+      for (const day of previous) await moveLegacyDay(day);
+      status.textContent = 'Записи и фотографии перенесены в ваш архив.';
+      move.remove();
+    } catch (error) { status.textContent = error.message; move.disabled = false; }
+  } }, 'Перенести прежние записи');
+  section.append(status, move);
+}
+
 async function route() {
   const version = ++routeVersion;
   const current = () => version === routeVersion;
@@ -199,13 +221,15 @@ async function route() {
     else a.removeAttribute('aria-current');
   });
   try {
-    if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
+    if (hash === '#/account') await viewAccount(current);
+    else if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
+    else if (hash === '#/new' && !account) view.replaceChildren(loginForm('#/new'));
     else if (hash === '#/new') await viewNew();
-    else await viewArchive(current);
+    else await viewArchive(current, hash === '#/archive');
   } catch (e) {
     if (!current()) return;
     console.error(e);
-    view.replaceChildren(h('section', { class: 'wrap' }, h('h1', { class: 'h1' }, 'Что-то пошло не так'), h('p', { class: 'muted' }, String(e.message || e)), h('a', { class: 'btn', href: '#/' }, 'Вернуться в архив')));
+    view.replaceChildren(h('section', { class: 'wrap' }, h('h1', { class: 'h1' }, 'Что-то пошло не так'), h('p', { class: 'muted' }, String(e.message || e)), h('a', { class: 'btn', href: '#/archive' }, 'Вернуться в архив')));
   }
 }
 window.addEventListener('hashchange', route);
@@ -214,7 +238,7 @@ document.querySelector('.skip').addEventListener('click', event => {
   view.focus();
 });
 
-const glassControls = '.btn, .fchip, .gallery-arrow, .nav a, .icon-btn, .weather-action, .thumb-x, button.linklike';
+const glassControls = '.btn, .gallery-arrow, .nav a, .icon-btn, .weather-action, .thumb-x, button.linklike';
 const glassMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const setGlassSpot = event => {
   if (glassMotion.matches || !(event.target instanceof Element)) return;
@@ -229,120 +253,141 @@ document.addEventListener('pointermove', setGlassSpot, { passive: true });
 document.addEventListener('pointerdown', setGlassSpot, { passive: true });
 
 // ---------- archive ----------
-async function viewArchive(current) {
-  const archived = await allDays();
-  const days = [];
-  for (const day of archived) {
-    if (!current()) return;
-    days.push(await upgradeDemo(day));
-  }
+const archiveDate = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+const archiveMonth = new Intl.DateTimeFormat('ru', { month: 'long', timeZone: 'UTC' });
+const newestFirst = (a, b) => b.date.localeCompare(a.date) || b.created - a.created;
+
+async function viewArchive(current, archiveOnly) {
+  const days = await allDays();
   if (!current()) return;
-  days.sort((a, b) => b.date.localeCompare(a.date) || b.created - a.created);
-  if (!days.length) return viewEmpty();
-  await fontsReady();
-  if (!current()) return;
+  days.sort(newestFirst);
+  if (!days.length && !archiveOnly) return viewEmpty();
+
   const urls = [];
-  onCleanup(() => urls.forEach(u => URL.revokeObjectURL(u)));
-  const comps = new Map(days.map(d => [d.id, safeCompute(d)]));
-
-  const strip = h('div', { class: 'strip', role: 'list', 'aria-label': 'Полоса дней по порядку' },
-    [...days].reverse().map(d => {
-      const c = comps.get(d.id), pal = c ? c.style.palette.map(rgbHex) : ['#ccc', '#999'];
-      return h('a', {
-        class: 'strip-day', role: 'listitem', href: `#/day/${d.id}`, title: `${fmtDateLong(d.date)} — ${d.meta.title}`,
-        'aria-label': `${fmtDateLong(d.date)}: ${d.meta.title}`,
-        style: { background: `linear-gradient(180deg, ${pal[4]}, ${pal[3]} 30%, ${pal[2]} 55%, ${pal[1]} 80%, ${pal[0]})` },
-      });
-    }));
-
-  const imgs = new Map();
-  const cards = days.map(d => {
-    const c = comps.get(d.id);
-    const cover = d.coverVer === COVER_VER && d.cover ? d.cover : d.photos[0]?.blob;
-    const url = cover ? URL.createObjectURL(cover) : '';
-    if (url) urls.push(url);
-    const hay = [d.meta.title, d.text, d.song?.meta?.artist, d.song?.meta?.title, d.date, fmtDateLong(d.date), c && TECH[c.primary].name, c && TIME_RU[c.mood.light], SEASON_RU[d.inputs.text.season]].join(' ').toLowerCase();
-    const img = h('img', { src: url || null, alt: '', loading: 'lazy' });
-    imgs.set(d.id, img);
-    const el = h('a', { class: 'card', href: `#/day/${d.id}`, 'data-tech': c?.primary || '', 'data-light': c?.mood.light || '' },
-      h('div', { class: 'card-img' }, img),
-      h('div', { class: 'card-body' },
-        h('div', { class: 'card-title' }, d.meta.title),
-        h('div', { class: 'card-meta' }, `${fmtDateLong(d.date)} · ${d.photos.length} фото`)));
-    el.dataset.hay = hay;
-    return el;
+  onCleanup(() => urls.forEach(url => URL.revokeObjectURL(url)));
+  const comps = new Map(days.map(day => [day.id, safeCompute(day)]));
+  const cards = days.map(day => {
+    const comp = comps.get(day.id);
+    const photo = day.photos[0]?.blob || day.cover;
+    const image = photo ? URL.createObjectURL(photo) : null;
+    if (image) urls.push(image);
+    const date = fmtDateLong(day.date);
+    const title = day.meta.title;
+    const tech = comp?.primary || '';
+    const light = comp?.mood.light || '';
+    const hay = [title, day.text, day.song?.meta?.artist, day.song?.meta?.title, day.date, date,
+      TECH[tech]?.name, TIME_RU[light], SEASON_RU[day.inputs.text.season]].join(' ').toLowerCase();
+    const card = h('a', { class: 'archive-card', href: `#/day/${day.id}`, 'aria-label': `${title}, ${date}` },
+      image && h('img', { src: image, alt: '', loading: 'lazy', decoding: 'async' }),
+      h('div', { class: 'archive-caption' },
+        h('time', { datetime: day.date }, archiveDate.format(new Date(day.date))),
+        h('h4', null, title)),
+      h('span', { class: 'archive-card-arrow', 'aria-hidden': 'true' }, '↗'));
+    return { day, image, date, tech, light, hay, card };
   });
-  const grid = h('div', { class: 'grid' }, cards);
-  const empty = h('p', { class: 'muted filtered-empty', hidden: true }, 'Ничего не нашлось. Попробуйте другое слово или снимите фильтр.');
-  const filter = { q: '', tech: '', light: '' };
-  const apply = () => {
-    let shown = 0;
-    cards.forEach(c => {
-      const ok = (!filter.q || c.dataset.hay.includes(filter.q)) && (!filter.tech || c.dataset.tech === filter.tech) && (!filter.light || c.dataset.light === filter.light);
-      c.hidden = !ok; if (ok) shown++;
-    });
-    empty.hidden = shown > 0;
+
+  const results = h('div', { class: 'archive-results' });
+  const noResults = h('p', { class: 'archive-empty', role: 'status', hidden: true }, 'Ничего не нашлось. Измените запрос или сбросьте фильтры.');
+  const filters = { query: '', tech: '', light: '' };
+  let newest = true;
+  function apply() {
+    const groups = new Map();
+    const ordered = newest ? cards : [...cards].reverse();
+    for (const entry of ordered) {
+      if (filters.query && !entry.hay.includes(filters.query)) continue;
+      if (filters.tech && entry.tech !== filters.tech) continue;
+      if (filters.light && entry.light !== filters.light) continue;
+      const year = entry.day.date.slice(0, 4);
+      if (!groups.has(year)) groups.set(year, []);
+      groups.get(year).push(entry.card);
+    }
+    results.replaceChildren(...[...groups].map(([year, entries]) =>
+      h('section', { class: 'archive-year' }, h('h3', null, year),
+        h('div', { class: 'archive-grid', 'data-leads': Math.min(3, entries.length) }, entries))));
+    noResults.hidden = Boolean(groups.size);
+  }
+  const search = h('input', { type: 'search', 'aria-label': 'Поиск по дневнику', placeholder: 'Поиск по дневнику',
+    oninput: event => { filters.query = event.target.value.trim().toLowerCase(); apply(); } });
+  const filterGroup = (key, legend, values, label) => {
+    const buttons = ['', ...values].map(value => h('button', { class: 'archive-chip', type: 'button', value,
+      'aria-pressed': String(!value), onclick: () => {
+        filters[key] = filters[key] === value ? '' : value;
+        buttons.forEach(button => button.setAttribute('aria-pressed', String(button.value === filters[key])));
+        apply();
+      },
+    }, value ? label(value) : 'Все'));
+    return h('fieldset', { class: 'archive-filter-group' }, h('legend', null, legend), h('div', null, buttons));
   };
-  const search = h('input', {
-    class: 'search', type: 'search', placeholder: 'Поиск: место, песня, месяц, слово из записи', 'aria-label': 'Поиск по дневнику',
-    oninput: e => { filter.q = e.target.value.trim().toLowerCase(); apply(); },
-  });
-  const chipGroup = (key, label, options) => {
-    const btns = [];
-    const set = v => { filter[key] = v; btns.forEach(([b, bv]) => b.setAttribute('aria-pressed', String(bv === v))); apply(); };
-    const mk = (text, v) => { const b = h('button', { class: 'fchip', type: 'button', 'aria-pressed': String(v === ''), onclick: () => set(filter[key] === v ? '' : v) }, text); btns.push([b, v]); return b; };
-    return h('div', { class: 'fchips', role: 'group', 'aria-label': label }, mk('Все', ''), options.map(([v, text]) => mk(text, v)));
-  };
-  const count = (attr, v) => cards.filter(c => c.dataset[attr] === v).length;
-  const techChips = chipGroup('tech', 'Фильтр по технике', TECH_ORDER.filter(k => count('tech', k)).map(k => [k, `${TECH[k].name} · ${count('tech', k)}`]));
-  const lightChips = chipGroup('light', 'Фильтр по времени суток', ['morning', 'day', 'evening', 'night'].filter(k => count('light', k)).map(k => [k, TIME_RU[k]]));
-  const exportBtn = h('button', { class: 'btn', type: 'button', onclick: () => exportForSubmission(exportBtn, days, comps) }, 'Материалы для сдачи');
-  const demoCount = new Set(days.map(d => exampleFor(d)?.date).filter(Boolean)).size;
-  const demoStatus = h('p', { class: 'muted small', role: 'status', hidden: true });
-  const demoBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
+  const techs = TECH_ORDER.filter(key => cards.some(entry => entry.tech === key));
+  const lights = ['morning', 'day', 'evening', 'night'].filter(key => cards.some(entry => entry.light === key));
+  const filterMenu = h('details', { class: 'archive-disclosure', name: 'archive-tools' },
+    h('summary', { class: 'archive-control' }, h('span', { class: 'archive-sliders', 'aria-hidden': 'true' }, h('i'), h('i')), 'Фильтры'),
+    h('div', { class: 'archive-popover archive-filters' },
+      filterGroup('tech', 'Техника', techs, key => TECH[key].name),
+      filterGroup('light', 'Время суток', lights, key => TIME_RU[key])));
+  const demoCount = new Set(days.map(day => exampleFor(day)?.date).filter(Boolean)).size;
+  const status = h('p', { class: 'small muted', role: 'status', hidden: true });
+  const demoBtn = h('button', { class: 'archive-action', type: 'button', onclick: async () => {
     demoBtn.disabled = true;
-    demoStatus.hidden = false;
+    status.hidden = false;
     try {
-      await seedDemo((index, example) => { demoStatus.textContent = `Загружаю демо: ${fmtDateLong(example.date)}…`; });
-      if (demoStatus.isConnected) route();
+      await seedDemo((index, example) => { status.textContent = `Загружаю демо · ${fmtDateLong(example.date)}…`; });
+      if (status.isConnected) route();
     } catch (error) {
       console.error(error);
-      demoStatus.textContent = 'Демо не загрузилось. Попробуйте ещё раз.';
+      status.textContent = 'Демо не загрузилось. Попробуйте ещё раз.';
     } finally { demoBtn.disabled = false; }
   } }, 'Загрузить демо');
+  const exportBtn = h('button', { class: 'archive-action', type: 'button', onclick: () => exportForSubmission(exportBtn, days, comps) }, 'Материалы для сдачи');
+  const actions = h('details', { class: 'archive-disclosure', name: 'archive-tools' },
+    h('summary', { class: 'archive-control archive-more', 'aria-label': 'Действия с архивом' }, '···'),
+    h('div', { class: 'archive-popover' }, demoCount < DEMO_DAYS.length && demoBtn, exportBtn));
+  const sort = h('button', { class: 'archive-sort', type: 'button', onclick: () => {
+    newest = !newest;
+    sort.textContent = newest ? 'Сначала новые ↓' : 'Сначала старые ↑';
+    apply();
+  } }, 'Сначала новые ↓');
 
-  const recent = days.slice(0, 9).map(d => {
-    const image = URL.createObjectURL(d.photos[0].blob);
-    urls.push(image);
-    return { title: d.meta.title, date: fmtDateLong(d.date), image, href: `#/day/${d.id}` };
-  });
-  view.replaceChildren(homeStage(recent, h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день ↗')),
-    h('section', { class: 'wrap archive-list' },
-    h('div', { class: 'archive-head' },
-      h('div', null,
-        h('h1', { class: 'h1' }, 'Дневник'),
-        h('p', { class: 'muted' }, `${days.length} ${days.length % 10 === 1 && days.length % 100 !== 11 ? 'день' : days.length % 10 >= 2 && days.length % 10 <= 4 && (days.length % 100 < 12 || days.length % 100 > 14) ? 'дня' : 'дней'} · откройте любой, чтобы снова увидеть и услышать его`)),
-      h('div', { class: 'row tight' }, demoCount < DEMO_DAYS.length ? demoBtn : null, exportBtn,
-        h('a', { class: 'btn primary', href: '#/new' }, 'Записать день'))),
-    demoStatus,
-    h('div', { class: 'label' }, 'Полоса дней — погода внутри по порядку'),
-    strip,
-    h('div', { class: 'archive-tools' }, search, techChips, lightChips),
-    grid, empty));
+  const title = h(archiveOnly ? 'h1' : 'h2', { class: 'archive-title', id: 'archive-title' }, 'Архив');
+  const section = h('section', { class: 'archive-list', 'aria-labelledby': title.id });
+  if (days.length) {
+    const recentMonth = archiveMonth.format(new Date(days[0].date));
+    const firstMonth = archiveMonth.format(new Date(days.at(-1).date));
+    const year = days[0].date.slice(0, 4), startYear = days.at(-1).date.slice(0, 4);
+    const period = year !== startYear ? startYear + '–' + year :
+      (firstMonth === recentMonth ? recentMonth : firstMonth + ' – ' + recentMonth) + ' ' + year;
+    section.append(h('div', { class: 'archive-head' },
+      h('div', null, title, h('p', { class: 'archive-count' }, `${days.length} ${plural(days.length, 'запись', 'записи', 'записей')} · ${period}`)),
+      h('div', { class: 'archive-tools' }, h('label', { class: 'archive-search' }, h('span', { 'aria-hidden': 'true' }), search), filterMenu, actions)),
+    status, h('div', { class: 'archive-content' }, sort, results, noResults));
+    apply();
+    const closeMenus = event => {
+      for (const menu of [filterMenu, actions]) {
+        if (menu.open && !menu.contains(event.target)) menu.open = false;
+      }
+    };
+    const dismissMenus = event => {
+      if (event.key !== 'Escape') return;
+      const menu = [filterMenu, actions].find(detail => detail.open);
+      if (!menu) return;
+      menu.open = false;
+      menu.querySelector('summary').focus();
+    };
+    document.addEventListener('pointerdown', closeMenus);
+    document.addEventListener('keydown', dismissMenus);
+    onCleanup(() => {
+      document.removeEventListener('pointerdown', closeMenus);
+      document.removeEventListener('keydown', dismissMenus);
+    });
+  } else {
+    section.append(title, h('p', { class: 'archive-empty' }, 'Здесь появятся записанные дни.'),
+      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/new' }, 'Записать день'), demoBtn), status);
+  }
 
-  let alive = true;
-  onCleanup(() => { alive = false; });
-  for (const d of days) {
-    if (!alive) break;
-    if (d.coverVer === COVER_VER || !comps.get(d.id)) continue;
-    try {
-      d.cover = await renderCover(d, comps.get(d.id));
-      d.coverVer = COVER_VER;
-      await putDay(d);
-      if (!alive) break;
-      const u = URL.createObjectURL(d.cover); urls.push(u);
-      imgs.get(d.id).src = u;
-    } catch (e) { console.warn('cover refresh failed', e); }
+  if (archiveOnly) view.replaceChildren(section);
+  else {
+    const recent = cards.slice(0, 9).map(({ day, image, date }) => ({ title: day.meta.title, image, date, href: `#/day/${day.id}` }));
+    view.replaceChildren(homeStage(recent, h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день')), section);
   }
 }
 
@@ -351,12 +396,13 @@ async function exportForSubmission(btn, days, comps) {
   const label = btn.textContent;
   btn.disabled = true;
   try {
-    await fontsReady();
     const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
     const files = [], covers = [];
     for (let i = 0; i < sorted.length; i++) {
       btn.textContent = `Готовлю ${i + 1} из ${sorted.length}…`;
-      const d = sorted[i], c = comps.get(d.id) || computeDay(d), n = String(i + 1).padStart(2, '0');
+      const stored = sorted[i]._record ? await getDay(sorted[i].id) : sorted[i];
+      const d = await upgradeDemo(stored);
+      const c = (d === stored && comps.get(d.id)) || computeDay(d), n = String(i + 1).padStart(2, '0');
       const R = new PageRenderer(document.createElement('canvas'));
       await R.load(d, c);
       const page = await R.poster(PW);
@@ -385,8 +431,8 @@ async function feedSheet(covers) {
   c.width = gap + n * (cw + gap); c.height = top + ch + 150;
   const x = c.getContext('2d');
   x.fillStyle = '#ece6db'; x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = '#1d1a17'; x.font = '600 48px Literata'; x.fillText('Погода внутри — лента дней', gap, 78);
-  x.font = '400 20px "JetBrains Mono"'; x.fillStyle = 'rgba(29,26,23,.6)';
+  x.fillStyle = '#1d1a17'; x.font = '600 48px ' + FONT; x.fillText('Погода внутри — лента дней', gap, 78);
+  x.font = '400 20px ' + FONT; x.fillStyle = 'rgba(29,26,23,.6)';
   x.fillText(`${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'дня' : 'дней'} · один дневник · у каждого дня своя «рука»`.toUpperCase(), gap, 116);
   for (let i = 0; i < n; i++) {
     const { d, c: comp, blob } = covers[i], px = gap + i * (cw + gap);
@@ -394,11 +440,11 @@ async function feedSheet(covers) {
     x.save(); x.shadowColor = 'rgba(40,30,20,.25)'; x.shadowBlur = 24; x.shadowOffsetY = 10;
     x.drawImage(bmp, px, top, cw, ch); x.restore();
     bmp.close?.();
-    x.fillStyle = '#1d1a17'; x.font = '600 22px Literata';
+    x.fillStyle = '#1d1a17'; x.font = '600 22px ' + FONT;
     const words = d.meta.title.split(' '); let line = '', ly = top + ch + 40;
     for (const w of words) { if (x.measureText(line + ' ' + w).width > cw && line) { x.fillText(line, px, ly); ly += 28; line = w; } else line = line ? line + ' ' + w : w; }
     x.fillText(line, px, ly);
-    x.font = '400 15px "JetBrains Mono"'; x.fillStyle = 'rgba(29,26,23,.6)';
+    x.font = '400 15px ' + FONT; x.fillStyle = 'rgba(29,26,23,.6)';
     x.fillText(`${fmtDateLong(d.date)} · ${TECH[comp.primary].name}`, px, ly + 28);
   }
   return canvasBlob(c, 'image/jpeg', 0.9);
@@ -414,7 +460,8 @@ function daysMarkdown(covers) {
 }
 
 function homeStage(items, ...actions) {
-  const scene = scenery();
+  const scene = scenery({ particles: false });
+  const { toggle, sync } = animateScenery(scene, onCleanup);
   let automatic, selected = null;
   const seasons = ['summer', 'autumn', 'winter', 'spring'];
   const buttons = seasons.map(season => h('button', {
@@ -429,6 +476,7 @@ function homeStage(items, ...actions) {
     setScenery(scene, selected ? {
       scene: selected, motion: selected === 'winter' ? 'snow' : selected === 'autumn' ? 'leaves' : 'still',
     } : automatic);
+    sync();
     buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(selected === seasons[index])));
   }
   const weather = weatherControl(theme => { automatic = theme; renderSeason(); }, () => {
@@ -436,13 +484,11 @@ function homeStage(items, ...actions) {
     renderSeason();
   });
   return h('section', { class: 'landing', 'aria-labelledby': 'landing-title' }, scene,
-    h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Сезон фона' }, buttons),
+    h('div', { class: 'season-controls', role: 'group', 'aria-label': 'Фон дневника' }, buttons, toggle),
     h('div', { class: 'landing-intro' },
-      h('div', { class: 'landing-heading' },
-        h('p', { class: 'label landing-label' }, 'Личный дневник'),
-        h('h1', { id: 'landing-title' }, 'Дни, которые ', h('em', null, 'остаются.'))),
+      h('h1', { id: 'landing-title' }, 'Как прошёл день?'),
       h('div', { class: 'landing-detail' },
-        h('p', null, 'Фото, слова и песня складываются в живое воспоминание.'),
+        h('p', null, 'Сохраните пару строк, фотографии и песню дня.'),
         h('div', { class: 'landing-actions' }, actions))),
     h('div', { class: 'landscape-panel' }, weather, memoryGallery(items)));
 }
@@ -451,7 +497,7 @@ function viewEmpty() {
   const titles = ['Осенний парк и какао', 'Ночь перед сдачей', 'Летний вечер на крыше',
     'Дождливый вечер дома', 'Летнее утро у моря', 'Вечер в деревне', 'Вечер перед переездом'];
   const status = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
-  const newBtn = h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день ↗');
+  const newBtn = h('a', { class: 'btn primary big', href: '#/new' }, 'Записать день');
   let busy = false;
   const openDemo = async index => {
     if (busy) return;
@@ -477,6 +523,16 @@ function viewEmpty() {
 // ---------- new day ----------
 async function viewNew() {
   let photoFiles = [];
+  const buildCancellation = new AbortController();
+  onCleanup(() => buildCancellation.abort());
+  const prepared = new WeakMap();
+  function preparePhoto(file) {
+    if (!prepared.has(file)) prepared.set(file, processPhoto(file).catch(error => {
+      prepared.delete(file);
+      throw error;
+    }));
+    return prepared.get(file);
+  }
   const thumbs = h('div', { class: 'thumbs' });
   const urls = [];
   onCleanup(() => urls.forEach(u => URL.revokeObjectURL(u)));
@@ -485,6 +541,7 @@ async function viewNew() {
   const showErr = (key, msg) => { err[key].textContent = msg; err[key].hidden = !msg; };
 
   const renderThumbs = () => {
+    urls.splice(0).forEach(url => URL.revokeObjectURL(url));
     thumbs.replaceChildren(...photoFiles.map((f, i) => {
       const u = URL.createObjectURL(f); urls.push(u);
       return h('div', { class: 'thumb' }, h('img', { src: u, alt: `Фото ${i + 1}` }),
@@ -512,8 +569,9 @@ async function viewNew() {
   const songFile = h('input', { type: 'file', id: 'f-audio', accept: 'audio/*', onchange: () => showErr('song', '') });
   link.addEventListener('change', async () => {
     if (query.value.trim()) return;
-    const t = await titleFromLink(link.value);
-    if (t && !query.value.trim()) query.value = t;
+    const url = link.value;
+    const t = await titleFromLink(url);
+    if (t && link.value === url && !query.value.trim()) query.value = t;
   });
   const weatherOn = h('input', { type: 'checkbox', id: 'f-weather' });
   const city = h('input', { type: 'text', id: 'f-city', placeholder: 'Астана', value: getSetting('city', ''), disabled: true });
@@ -574,7 +632,6 @@ async function viewNew() {
       let ok = true;
       if (wordCount(text.value) < 3) { showErr('text', 'Напишите хотя бы пару предложений о дне — из слов система берёт свет и настроение.'); ok = false; }
       if (!photoFiles.length) { showErr('photos', 'Добавьте хотя бы одно фото этого дня.'); ok = false; }
-      if (!link.value.trim() && !query.value.trim() && !songFile.files[0]) { showErr('song', 'Добавьте песню: ссылку, название или свой аудиофайл.'); ok = false; }
       if (!ok) { form.querySelector('.field-error:not([hidden])')?.previousElementSibling?.focus?.(); return; }
       if (weatherOn.checked && city.value.trim()) setSetting('city', city.value.trim());
       submit.disabled = true; submit.textContent = 'Собираю…';
@@ -584,13 +641,15 @@ async function viewNew() {
       try {
         const day = await buildDay({
           date: date.value || todayISO(), text: text.value.trim(), photoFiles,
-          songLink: link.value.trim(), songQuery: query.value.trim(), songFile: songFile.files[0] || null,
+          songLink: link.value.trim(), signal: buildCancellation.signal,
+          songQuery: query.value.trim(), songFile: songFile.files[0] || null,
           weatherCity: weatherOn.checked ? city.value.trim() : '',
           weather: dayWeather?.date === (date.value || todayISO()) ? dayWeather : null,
-        }, step);
+        }, step, preparePhoto);
         await sleep(400);
-        location.hash = `#/day/${day.id}`;
+        if (form.isConnected) location.hash = `#/day/${day.id}`;
       } catch (ex) {
+        if (buildCancellation.signal.aborted) return;
         console.error(ex);
         toast('Не получилось собрать воспоминание: ' + ex.message + '. Попробуйте ещё раз.', 'error');
         submit.disabled = false; submit.textContent = 'Собрать воспоминание';
@@ -605,6 +664,7 @@ async function viewNew() {
     h('div', { class: 'field' }, h('span', { class: 'label-like' }, 'Фото дня'), fileIn, drop, thumbs, errEl('photos')),
     h('fieldset', { class: 'field' },
       h('legend', null, 'Песня дня'),
+      h('p', { class: 'hint' }, 'Если оставить поля пустыми, дневник сам найдёт музыку по фото.'),
       h('label', { for: 'f-link', class: 'sub' }, 'Ссылка на музыкальный сервис'), link,
       h('label', { for: 'f-query', class: 'sub' }, 'Исполнитель — название'), query,
       h('p', { class: 'hint' }, 'По названию находим официальный 30-секундный фрагмент и слушаем его: темп, тональность, энергию.'),
@@ -630,6 +690,15 @@ function photoAlbum(photos) {
   const urls = photos.map(photo => URL.createObjectURL(photo.blob));
   const photo = h('img', { class: 'photo-dialog-image', alt: '' });
   const counter = h('span', { class: 'small muted', 'aria-live': 'polite' });
+  const savePhoto = h('button', { class: 'btn small', type: 'button', onclick: async () => {
+    const item = photos[index];
+    savePhoto.disabled = true;
+    try {
+      const blob = item.original || (item.loadOriginal && await item.loadOriginal()) || item.blob;
+      downloadBlob(blob, item.originalName || 'фото-' + (index + 1) + '.jpg');
+    } catch (error) { toast(error.message, 'error'); }
+    finally { savePhoto.disabled = false; }
+  } }, 'Скачать фото');
   let index = 0;
   const select = (to) => {
     index = (to + urls.length) % urls.length;
@@ -640,7 +709,7 @@ function photoAlbum(photos) {
   const dialog = h('dialog', { class: 'dialog photo-dialog', 'aria-label': 'Фотографии дня' }, photo,
     h('div', { class: 'photo-dialog-controls' },
       urls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Предыдущее фото', onclick: () => select(index - 1) }, '←') : null,
-      counter,
+      counter, savePhoto,
       urls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Следующее фото', onclick: () => select(index + 1) }, '→') : null,
       h('button', { class: 'btn small', type: 'button', onclick: () => dialog.close() }, 'Закрыть')));
   dialog.addEventListener('keydown', event => {
@@ -666,9 +735,8 @@ function photoAlbum(photos) {
 async function viewDay(id, current) {
   const stored = await getDay(id);
   if (!current()) return;
-  if (!stored) { location.hash = '#/'; return; }
+  if (!stored) { location.hash = '#/archive'; return; }
   const day = await upgradeDemo(stored);
-  await fontsReady();
   const list = (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
   if (!current()) return;
   const idx = list.findIndex(d => d.id === id), prev = list[idx - 1], next = list[idx + 1];
@@ -693,7 +761,9 @@ async function viewDay(id, current) {
   }
   const album = photoAlbum(day.photos);
   const sound = getSound();
-  let playing = false, speaking = false, recording = false, t0 = performance.now(), buf = null, bufTried = false, lastVideo = null;
+  let playing = false, speaking = false, recording = false, t0 = performance.now(), buf = null, lastVideo = null;
+  const audioWork = new AbortController();
+  onCleanup(() => audioWork.abort());
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let raf = 0;
   const frame = () => {
@@ -707,23 +777,63 @@ async function viewDay(id, current) {
   const playBtn = h('button', { class: 'btn primary', type: 'button' });
   const voiceBtn = h('button', { class: 'btn', type: 'button' }, 'Озвучить запись');
   const whyBtn = h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'why' }, 'Почему так');
-  const songNote = h('p', { class: 'note muted' });
+  const songNote = h('p', { class: 'note muted', role: 'status' });
   const voiceNote = h('p', { class: 'note muted' });
   const updatePlay = () => { playBtn.textContent = playing ? '■ Остановить' : '▶ Слушать день'; };
   updatePlay();
 
   async function start() {
-    await sound.resume();
-    if (!bufTried) { bufTried = true; try { buf = await loadSongBuffer(day.song); } catch (e) { console.warn(e); buf = null; } }
-    const Mu = day.inputs.music;
-    sound.stopAll();
-    if (buf) sound.playSong(buf, Mu.segStart || 0, Math.min(renderer.D, buf.duration - (Mu.segStart || 0)));
-    else sound.startSketch(Mu, renderer.D);
-    sound.startAmbient(day.meta.ambient);
-    playing = true; updatePlay();
-    songNote.textContent = buf
-      ? (day.song.fileBlob ? 'Звучит ваш файл — самый громкий 30-секундный фрагмент.' : 'Звучит официальный 30-секундный фрагмент.')
-      : 'Превью недоступно — звучит звуковой эскиз по темпу и тональности песни.';
+    if (playBtn.disabled) return false;
+    const { signal } = audioWork;
+    playBtn.disabled = true;
+    songNote.textContent = 'Загружаю музыку…';
+    try {
+      await sound.resume();
+      if (!buf) {
+        try { buf = await loadSongBuffer(day.song || {}, signal); }
+        catch (error) { if (day.song?.fileBlob) throw error; }
+      }
+      signal.throwIfAborted();
+      if (!buf) {
+        songNote.textContent = 'Ищу доступную музыку по фото…';
+        const { song, music } = await findMusicForPhotos(aggregatePhotos(day.photos), signal);
+        const originalLink = day.song?.originalLink || (!day.song?.autoPicked && (day.song?.link || day.song?.meta?.trackViewUrl));
+        const originalTitle = day.song?.originalTitle || (!day.song?.autoPicked && (day.song?.meta?.title || day.song?.query));
+        if (/^https?:\/\//i.test(originalLink) && originalLink !== song.link) song.originalLink = originalLink;
+        if (originalTitle && originalTitle !== song.meta.title) song.originalTitle = originalTitle;
+        clearTimeout(saveTimer);
+        await pendingMoodSave;
+        const updated = { ...day, song, inputs: { ...day.inputs, music } };
+        const computed = computeDay(updated);
+        updated.cover = await renderCover(updated, computed);
+        updated.coverVer = COVER_VER;
+        signal.throwIfAborted();
+        await putDay(updated);
+        signal.throwIfAborted();
+        Object.assign(day, updated);
+        comp = computed;
+        renderer.setComputed(comp);
+        drawBackPage(back, day, comp);
+        lastVideo = null;
+        recNote.textContent = '';
+        renderInfo();
+        buf = await loadSongBuffer(day.song, signal);
+      }
+      signal.throwIfAborted();
+      const offset = clamp(day.inputs.music.segStart || 0, 0, Math.max(0, buf.duration - 1));
+      sound.stopAll();
+      sound.playSong(buf, offset, Math.min(renderer.D, buf.duration - offset));
+      sound.startAmbient(day.meta.ambient);
+      playing = true;
+      updatePlay();
+      songNote.textContent = day.song.autoPicked ? 'Звучит музыка, подобранная по фото.' :
+        day.song.fileBlob ? 'Звучит фрагмент вашего файла.' : 'Звучит официальный фрагмент песни.';
+      return true;
+    } catch (error) {
+      if (!signal.aborted) songNote.textContent = day.song?.fileBlob ? 'Не удалось открыть ваш аудиофайл.' :
+        error.name === 'TimeoutError' ? 'Поиск музыки занял слишком много времени. Попробуйте ещё раз.' : error.message;
+      return false;
+    } finally { playBtn.disabled = false; }
   }
   function stop() { sound.stopAll(); stopSpeaking(); speaking = false; voiceBtn.textContent = 'Озвучить запись'; playing = false; t0 = performance.now(); updatePlay(); }
   playBtn.addEventListener('click', () => (playing ? stop() : start()));
@@ -765,12 +875,26 @@ async function viewDay(id, current) {
     dot.style.left = ((comp.mood.V + 1) / 2) * 100 + '%'; dot.style.top = (1 - comp.mood.E) * 100 + '%';
     pad.setAttribute('aria-valuetext', `приятность ${comp.mood.V.toFixed(2)}, энергия ${comp.mood.E.toFixed(2)}`);
   };
-  let saveTimer = 0;
+  let saveTimer = 0, pendingMoodSave = Promise.resolve();
   const scheduleSave = () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(async () => { try { day.cover = await renderCover(day, comp); day.coverVer = COVER_VER; await putDay(day); } catch (e) { console.warn(e); } }, 900);
+    saveTimer = setTimeout(() => {
+      pendingMoodSave = pendingMoodSave.then(async () => {
+        day.cover = await renderCover(day, comp);
+        day.coverVer = COVER_VER;
+        await putDay(day);
+      }).catch(error => toast('Изменения не сохранены. ' + error.message, 'error'));
+    }, 900);
   };
-  const applyOverride = o => { day.override = o; comp = computeDay(day); renderer.setComputed(comp); drawBackPage(back, day, comp); placeDot(); renderInfo(); scheduleSave(); };
+  const applyOverride = o => {
+    if (playBtn.disabled) return;
+    day.override = o;
+    comp = computeDay(day);
+    renderer.setComputed(comp);
+    drawBackPage(back, day, comp);
+    renderInfo();
+    scheduleSave();
+  };
   const fromPointer = ev => {
     const r = pad.getBoundingClientRect();
     applyOverride({ valence: clamp((ev.clientX - r.left) / r.width) * 2 - 1, energy: 1 - clamp((ev.clientY - r.top) / r.height) });
@@ -802,10 +926,15 @@ async function viewDay(id, current) {
   }
   folderBtn.addEventListener('click', saveFolder);
   recBtn.addEventListener('click', async () => {
-    if (recording) return;
+    if (recording || playBtn.disabled) return;
     if (!('MediaRecorder' in window) || !canvas.captureStream) { toast('Запись видео не поддерживается в этом браузере', 'error'); return; }
     recording = true; recBtn.disabled = true;
-    stop(); await start();
+    stop();
+    if (!await start()) {
+      recording = false;
+      recBtn.disabled = false;
+      return;
+    }
     const stream = canvas.captureStream(30);
     const at = sound.rec.stream.getAudioTracks()[0];
     if (at) stream.addTrack(at);
@@ -829,7 +958,9 @@ async function viewDay(id, current) {
   const delBtn = h('button', {
     class: 'btn danger ghost small', type: 'button', onclick: async () => {
       if (!confirm(`Удалить день «${day.meta.title}» из дневника? Это нельзя отменить.`)) return;
-      await deleteDay(day.id); toast(`День «${day.meta.title}» удалён`); location.hash = '#/';
+      try {
+        await deleteDay(day.id); toast(`День «${day.meta.title}» удалён`); location.hash = '#/archive';
+      } catch (error) { toast(error.message, 'error'); }
     },
   }, 'Удалить день');
 
@@ -837,7 +968,7 @@ async function viewDay(id, current) {
     const meta = day.song?.meta || {}, Mu = day.inputs.music, W = comp.weights;
     side.replaceChildren(
       h('nav', { class: 'daynav', 'aria-label': 'Соседние дни' },
-        h('a', { class: 'btn ghost small', href: '#/' }, '← Архив'),
+        h('a', { class: 'btn ghost small', href: '#/archive' }, '← Архив'),
         h('span', { class: 'spacer' }),
         prev ? h('a', { class: 'btn ghost small', href: `#/day/${prev.id}`, title: prev.meta.title }, '‹ Раньше') : null,
         next ? h('a', { class: 'btn ghost small', href: `#/day/${next.id}`, title: next.meta.title }, 'Позже ›') : null),
@@ -857,7 +988,13 @@ async function viewDay(id, current) {
         h('h2', { class: 'h2' }, 'Песня'),
         h('p', null, `♪ ${meta.artist ? meta.artist + ' — ' : ''}${meta.title || day.song?.query || 'без названия'}${meta.year ? ` (${meta.year})` : ''}`),
         h('p', { class: 'muted small' }, Mu.source === 'audio' ? `${Mu.bpm} BPM · ${Mu.key} · энергия ${Math.round(Mu.energy * 100)}%` : `≈${Mu.bpm} BPM по жанру ${meta.genre || ''}`),
-        (day.song?.link || meta.trackViewUrl) ? h('a', { class: 'linklike', href: day.song.link || meta.trackViewUrl, target: '_blank', rel: 'noopener' }, `Открыть в ${day.song.service || 'Apple Music'} ↗`) : null),
+        day.song?.autoPicked ? h('p', { class: 'muted small' }, day.song.reason) : null,
+        h('div', { class: 'row tight' },
+          /^https?:\/\//i.test(day.song?.link || meta.trackViewUrl) ? h('a', { class: 'linklike', href: day.song?.link || meta.trackViewUrl, target: '_blank', rel: 'noopener' }, `Источник · ${day.song?.service || 'Apple Music'} ↗`) : null,
+          meta.licenseUrl ? h('a', { class: 'linklike', href: meta.licenseUrl, target: '_blank', rel: 'noopener' }, meta.license) :
+            meta.license ? h('span', { class: 'small muted' }, meta.license) : null,
+          /^https?:\/\//i.test(day.song?.originalLink) ? h('a', { class: 'linklike', href: day.song.originalLink, target: '_blank', rel: 'noopener' }, 'Ранее выбранная песня ↗') :
+            day.song?.originalTitle ? h('span', { class: 'small muted' }, 'Ранее выбрано · ' + day.song.originalTitle) : null)),
       h('div', { class: 'block' },
         h('h2', { class: 'h2' }, 'Запись'),
         h('p', { class: 'entry' }, day.text),
@@ -904,7 +1041,7 @@ async function viewDay(id, current) {
     if (e.key === ' ') { e.preventDefault(); playing ? stop() : start(); }
     else if (e.key === 'ArrowLeft' && prev) location.hash = `#/day/${prev.id}`;
     else if (e.key === 'ArrowRight' && next) location.hash = `#/day/${next.id}`;
-    else if (e.key === 'Escape') location.hash = '#/';
+    else if (e.key === 'Escape') location.hash = '#/archive';
   };
   document.addEventListener('keydown', onKey);
   const onVis = () => { if (document.hidden && playing && !recording) stop(); };
@@ -918,4 +1055,8 @@ async function viewDay(id, current) {
   });
 }
 
-route();
+renewSession().then(route).catch(error => {
+  view.replaceChildren(h('section', { class: 'wrap' }, h('p', { role: 'alert' }, error.message),
+    h('button', { class: 'btn', onclick: () => location.reload() }, 'Попробовать снова'),
+    h('button', { class: 'btn', onclick: signOut }, 'Выйти')));
+});
