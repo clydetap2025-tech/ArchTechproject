@@ -25,28 +25,19 @@ export function setScenery(scene, theme) {
 }
 
 export function animateScenery(scene, onCleanup) {
+  const book = document.getElementById('book-intro');
   const video = h('video', { class: 'scenery-video', muted: true, loop: true, playsinline: true, preload: 'none' });
   video.muted = true;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-  let visible = false, paused = false;
-  const icon = h('span', { 'aria-hidden': 'true' });
-  const toggle = h('button', { type: 'button', class: 'btn small scenery-toggle', onclick: () => {
-    paused = !paused;
-    sync();
-  } }, icon);
+  let visible = false;
 
   function sync() {
     const { scene: season, motion } = scene.dataset;
     const next = motion === 'rain' && season !== 'winter' ? 'rain' : season;
     const enabled = !reduced.matches;
-    const label = paused ? 'Включить анимацию фона' : 'Приостановить анимацию фона';
-    toggle.hidden = !enabled;
-    toggle.title = label;
-    toggle.setAttribute('aria-label', label);
-    icon.textContent = paused ? '▶' : '⏸';
     video.poster = sceneryMedia(next, 'jpg');
     scene.style.setProperty('--scenery-poster', `url("${video.poster}"), var(--landscape)`);
-    if (!enabled || paused || !visible || document.hidden) {
+    if (!enabled || !visible || document.hidden || book.open) {
       video.pause();
       if (!enabled || video.dataset.scene !== next) video.classList.remove('is-playing');
       return;
@@ -65,16 +56,18 @@ export function animateScenery(scene, onCleanup) {
   const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync(); });
   visibility.observe(scene);
   document.addEventListener('visibilitychange', sync);
+  book.addEventListener('close', sync);
   reduced.addEventListener('change', sync);
   onCleanup(() => {
     visibility.disconnect();
     document.removeEventListener('visibilitychange', sync);
+    book.removeEventListener('close', sync);
     reduced.removeEventListener('change', sync);
     video.pause();
     video.removeAttribute('src');
     video.load();
   });
-  return { toggle, sync };
+  return sync;
 }
 
 export function memoryGallery(items) {

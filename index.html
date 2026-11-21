@@ -3,10 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Погода внутри — дневник атмосферы дня</title>
+  <title>DayTrace — дневник атмосферы дня</title>
   <meta name="description" content="Личный дневник, который превращает текст, фото и песню дня в живое воспоминание.">
   <link rel="icon" href="brand.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/archive.css">
+  <link rel="stylesheet" href="css/book-intro.css">
 </head>
 <body>
   <svg class="glass-filter-defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -22,14 +24,13 @@
   </svg>
   <a class="skip" href="#view">К содержимому</a>
   <header class="topbar">
-    <a class="brand" href="#/" aria-label="Погода внутри — на главную">
+    <a class="brand" href="#/" aria-label="DayTrace — на главную">
       <img class="brand-mark" src="brand.svg" width="38" height="38" alt="">
-      <span class="brand-name">Погода <em>внутри</em></span>
+      <span class="brand-name">Day<span>Trace</span></span>
     </a>
     <nav class="nav" aria-label="Основная навигация">
       <a href="#/archive" data-nav>Архив</a>
       <a href="#/account" id="account-link" data-nav>Войти</a>
-      <a href="#/new" data-nav class="nav-cta" aria-label="Записать день"><span>Записать день</span></a>
     </nav>
   </header>
   <main id="view" tabindex="-1">
@@ -40,6 +41,31 @@
     </section>
   </main>
   <div id="toast" class="toasts" aria-live="polite"></div>
+  <dialog class="book-intro" id="book-intro" aria-label="Дневник открывается">
+    <div class="book-stage" aria-hidden="true">
+      <div class="book-shadow"></div>
+      <div class="book-model">
+        <div class="book-board book-base"></div>
+        <div class="book-edge edge-fore"></div><div class="book-edge edge-foot"></div>
+        <div class="book-edge edge-head"></div><div class="book-binding"></div>
+        <div class="book-spread">
+          <div class="book-print"></div><span class="book-section">DayTrace</span>
+        </div>
+        <div class="book-ribbon"></div>
+        <div class="book-lid">
+          <div class="book-lining"></div>
+          <div class="book-board book-cloth">
+            <div class="book-foil">
+              <span class="book-imprint">Личный дневник</span>
+              <span class="book-title">Day<i>Trace</i></span>
+              <img class="book-emblem" src="brand.svg" width="100" height="100" alt="">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <button type="button" class="book-skip" autofocus>Пропустить <span aria-hidden="true">→</span></button>
+  </dialog>
   <script>
     const startup = document.getElementById('startup');
     const showStartupHelp = (message, url, label) => {
@@ -53,6 +79,7 @@
     if (location.protocol === 'file:') {
       showStartupHelp('Дневник открыт как файл. Откройте адрес локального сервера в браузере.', 'http://localhost:8080/', 'Перейти к дневнику ↗');
     } else {
+      import('./js/book-intro.js').then(book => book.openBook()).catch(console.warn);
       setTimeout(() => {
         showStartupHelp('Дневник загружается дольше обычного. Попробуйте обновить страницу.', location.href, 'Обновить страницу');
       }, 12000);
