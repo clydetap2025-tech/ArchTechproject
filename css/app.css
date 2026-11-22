@@ -456,6 +456,34 @@ input[type=file] { font-size: 14px; max-width: 100%; }
 .step-note { font-family: var(--sans); font-size: 12px; }
 @keyframes pulse { 50% { opacity: .35; } }
 
+/* ---------- sharing ---------- */
+.social-page { max-width: 1060px; }
+.social-heading { margin-bottom: 24px; }
+.social-heading .h1 { margin-bottom: 10px; }
+.social-heading nav { margin: 0; }
+.friends-list, .friends-feed { margin: 18px 0; padding: 0; list-style: none; }
+.friends-list { max-width: 620px; }
+.friend-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--rule);
+}
+.friend-row strong { min-width: 0; overflow-wrap: anywhere; }
+.friend-row > button { flex: none; }
+.friend-invite { max-width: 620px; }
+.friend-invite > input { margin-top: 10px; }
+.friend-invite > input[hidden] { display: none; }
+.friend-invite > p:empty { display: none; }
+.friends-feed { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.friend-atmosphere {
+  display: grid; align-content: start; justify-items: start; gap: 11px; min-width: 0;
+  border: 1px solid var(--rule); background: var(--card); border-radius: 16px; padding: 14px;
+}
+.friend-atmosphere-meta, .friend-signals { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.friend-atmosphere-meta h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+.friend-atmosphere-meta time, .friend-signals { font-size: 13px; color: var(--muted); }
+.friend-palette { display: grid; width: 100%; height: 56px; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border-radius: 8px; }
+.friend-mood { color: var(--accent); }
+
 /* ---------- day view ---------- */
 .dayview {
   display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);

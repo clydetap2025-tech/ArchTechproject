@@ -19,6 +19,7 @@ import { photoTrackPicker } from './photo-track-picker.js';
 import { cloudSetVisibility, cloudSharedDay } from './cloud-days.js';
 import { visibilityOf } from './day-sharing.js';
 import { visibilityPicker } from './day-visibility.js';
+import { friendsFeed, friendsPage, invitationPage, listFriends } from './friends.js';
 import { localized, setAttribute as setUiAttribute, setText, translate, ui, uiDate, uiTextNode } from './i18n.js';
 
 const view = document.getElementById('view');
@@ -231,6 +232,8 @@ function mountAccountMenu() {
     menu.open = false;
     avatar.focus({ preventScroll: true });
   } }, accountIcon('<path d="M12 6a8 8 0 0 0-8-1v14a8 8 0 0 1 8 1 8 8 0 0 1 8-1V5a8 8 0 0 0-8 1Zm0 0v14"/>'), ui('Мой архив'));
+  const friends = h('a', { class: 'account-menu-item', href: '#/friends' },
+    accountIcon('<circle cx="9" cy="8" r="3"/><path d="M3 19v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m1 3a4 4 0 0 1 4 4v1"/>'), ui('Друзья'));
   const settings = h('button', { class: 'account-menu-item', type: 'button', 'aria-haspopup': 'dialog', onclick: () => {
     menu.open = false;
     openSettings(avatar);
@@ -243,7 +246,7 @@ function mountAccountMenu() {
   const menu = h('details', { class: 'account-menu' }, avatar,
     h('div', { class: 'account-popover', id: 'account-options' },
       h('p', { class: 'account-email' }, account.email),
-      h('div', { class: 'account-menu-group' }, archive, settings, contact, move, status),
+      h('div', { class: 'account-menu-group' }, archive, friends, settings, contact, move, status),
       h('div', { class: 'account-menu-group' }, logout)));
   document.getElementById('account-link').replaceWith(menu);
   menu.addEventListener('toggle', async () => {
@@ -294,7 +297,20 @@ async function route() {
   });
   try {
     if (hash === '#/account' && !account) view.replaceChildren(loginForm('#/'));
-    else if (hash.startsWith('#/friends/') && !account) view.replaceChildren(loginForm(hash));
+    else if ((hash === '#/friends' || hash.startsWith('#/friends/')) && !account) view.replaceChildren(loginForm(hash));
+    else if (hash.startsWith('#/friends/join/')) {
+      view.replaceChildren(invitationPage(hash.slice(15), name => {
+        toast(ui('Теперь вы друзья с {name}.', { name }));
+        location.hash = '#/friends';
+      }));
+    }
+    else if (hash === '#/friends' || hash === '#/friends/feed') {
+      view.replaceChildren(h('p', { class: 'wrap muted', role: 'status' }, ui('Открываю друзей…')));
+      const friends = await listFriends();
+      if (!current()) return;
+      const page = hash.endsWith('/feed') ? await friendsFeed(friends) : friendsPage(friends);
+      if (current()) view.replaceChildren(page);
+    }
     else if (hash.startsWith('#/friends/day/')) await viewDay(hash.slice(14), current, true);
     else if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
     else if (hash === '#/new' && !account) view.replaceChildren(loginForm('#/new'));
