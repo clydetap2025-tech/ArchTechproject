@@ -20,6 +20,7 @@ import { cloudSetVisibility, cloudSharedDay } from './cloud-days.js';
 import { visibilityOf } from './day-sharing.js';
 import { visibilityPicker } from './day-visibility.js';
 import { friendsFeed, friendsPage, invitationPage, listFriends } from './friends.js';
+import { loadWarmth } from './warmth.js';
 import { localized, setAttribute as setUiAttribute, setText, translate, ui, uiDate, uiTextNode } from './i18n.js';
 
 const view = document.getElementById('view');
@@ -750,6 +751,9 @@ async function viewDay(id, current, readOnly = false) {
   const flip = h('div', { class: 'flip', role: 'button', tabindex: '0', 'aria-label': ui('Перевернуть карточку'), 'aria-pressed': 'false' },
     h('div', { class: 'flip-inner' }, canvas, back));
   const stage = h('div', { class: 'stage' }, flip);
+  const warmth = !readOnly && account && day._record &&
+    h('section', { class: 'day-warmth', 'aria-labelledby': 'day-warmth-title', hidden: true });
+  if (warmth) stage.append(warmth);
   const heading = h('header', { class: 'day-heading' },
     h('time', { class: 'day-date', datetime: day.date }, uiDate(day.date)),
     h('h1', { class: 'day-title', id: 'day-title' }, title));
@@ -797,8 +801,13 @@ async function viewDay(id, current, readOnly = false) {
       signal.throwIfAborted();
       if (!buf) {
         if (readOnly) {
-          setText(songNote, ui('Фрагмент песни недоступен.'));
-          return false;
+          sound.stopAll();
+          sound.startSketch(day.inputs.music, renderer.D);
+          sound.startAmbient(day.meta.ambient);
+          playing = true;
+          updatePlay();
+          setText(songNote, ui('Фрагмент недоступен. Звучит эскиз в том же темпе.'));
+          return true;
         }
         setText(songNote, ui('Ищу доступную музыку по фото…'));
         const { song, music } = await findMusicForPhotos(aggregatePhotos(day.photos), signal);
@@ -858,6 +867,11 @@ async function viewDay(id, current, readOnly = false) {
   flip.addEventListener('click', () => {
     const backVisible = flip.classList.toggle('is-flipped');
     flip.setAttribute('aria-pressed', String(backVisible));
+    if (!warmth) return;
+    warmth.hidden = true;
+    if (backVisible) loadWarmth(day._record.id, warmth).then(hasHeat => {
+      if (current() && flip.classList.contains('is-flipped')) warmth.hidden = !hasHeat;
+    }).catch(() => {});
   });
   flip.addEventListener('keydown', event => {
     if (event.key !== 'Enter' && event.key !== ' ') return;

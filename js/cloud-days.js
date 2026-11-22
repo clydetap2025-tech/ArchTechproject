@@ -74,6 +74,13 @@ export async function cloudSetVisibility(day, visibility) {
   day._record = result;
 }
 
+export async function cloudLatestDay() {
+  const params = new URLSearchParams({
+    filter: 'owner="' + account.id + '"', sort: '-entry.date,-entry.created', perPage: '1', fields: 'entry',
+  });
+  return (await request(records + '?' + params)).items[0]?.entry || null;
+}
+
 export async function cloudList() {
   const days = [];
   for (let page = 1; ; page++) {

@@ -106,6 +106,8 @@ try {
   await api(path, { as: b, status: 404 });
   await api(projection, { as: b, status: 404 });
   assert.equal((await api(days, { as: b })).items.length, 0);
+  const latest = await api(days + '?sort=-entry.date,-entry.created&fields=entry&perPage=1', { as: a });
+  assert.equal(latest.items[0].entry.date, entry.date);
 
   const fileToken = (await api('files/token', { method: 'POST', as: b })).token;
   const assetNames = [day.pictures[0], day.originals[0], day.cover, day.audio];
@@ -121,6 +123,9 @@ try {
   assert.equal(summary.date, entry.date);
   for (const field of ['entry', 'day', 'pictures', 'originals', 'cover', 'audio']) assert.ok(!(field in summary), field);
   assert.ok(!JSON.stringify(summary).includes(secret));
+  assert.equal(summary.expand?.day, undefined);
+  const privateFilter = new URLSearchParams({ filter: 'day.entry.text = "' + secret + '"' });
+  await api(atmospheres + '?' + privateFilter, { as: b, status: 400 });
   await api(path, { as: b, status: 404 });
   await api(projection, { as: c, status: 404 });
   for (const name of assetNames) await api(asset(name), { as: b, status: 404 });

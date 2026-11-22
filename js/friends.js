@@ -2,6 +2,7 @@ import { account, request } from './account.js';
 import { h } from './util.js';
 import { moodMessage, sharedWeather } from './day-sharing.js';
 import { setText, translate, ui, uiDate } from './i18n.js';
+import { warmthButton } from './warmth.js';
 
 export const listFriends = () => request('daytrace/friends');
 
@@ -108,7 +109,9 @@ function atmosphereCard(day, friend) {
       h('span', { class: 'friend-mood' }, moodMessage(day.mood_label)),
       day.bpm > 0 && h('span', null, day.bpm + ' BPM'),
       h('span', { class: 'friend-weather' }, sharedWeather(day.weather_summary))),
-    day.visibility === 'full' && h('a', { href: '#/friends/day/' + day.id, class: 'btn small' }, ui('Открыть день')));
+    h('div', { class: 'friend-actions' },
+      warmthButton(day.id),
+      day.visibility === 'full' && h('a', { href: '#/friends/day/' + day.id, class: 'btn small' }, ui('Открыть день'))));
 }
 
 export async function friendsFeed(friends) {

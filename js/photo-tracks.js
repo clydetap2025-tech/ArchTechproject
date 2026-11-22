@@ -15,6 +15,8 @@ const tracks = {
   'cool-vibes': ['Cool Vibes', 'Jazz', 'USUAN1100863'],
 };
 
+export const isPhotoTrack = id => Object.hasOwn(tracks, id);
+
 export function photoTrack(id, reason) {
   const [title, genre, isrc] = tracks[id];
   const artist = 'Kevin MacLeod';
