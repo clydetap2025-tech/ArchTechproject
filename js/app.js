@@ -18,7 +18,7 @@ import { openSettings } from './preferences.js';
 import { photoTrackPicker } from './photo-track-picker.js';
 import { cloudSetVisibility, cloudSharedDay } from './cloud-days.js';
 import { visibilityOf } from './day-sharing.js';
-import { visibilityPicker } from './day-visibility.js';
+import { newDayVisibility, visibilityPicker } from './day-visibility.js';
 import { friendsFeed, friendsPage, invitationPage, listFriends } from './friends.js';
 import { loadWarmth } from './warmth.js';
 import { localized, setAttribute as setUiAttribute, setText, translate, ui, uiDate, uiTextNode } from './i18n.js';
@@ -620,7 +620,7 @@ async function viewNew() {
   refreshStudio();
 
   const steps = h('ol', { class: 'steps', 'aria-live': 'polite' });
-  const visibility = visibilityPicker('atmosphere');
+  const visibility = newDayVisibility();
   const submit = h('button', { class: 'btn primary big', type: 'submit' }, ui('Собрать воспоминание'));
 
   const form = h('form', {
@@ -645,7 +645,7 @@ async function viewNew() {
           songQuery: query.value.trim(), songFile: songFile.files[0] || null, photoSong: picker.selected,
           weatherCity: weatherOn.checked ? city.value.trim() : '',
           weather: dayWeather?.date === (date.value || todayISO()) ? dayWeather : null,
-          visibility: visibility.select.value,
+          visibility: visibility.value,
         }, step, preparePhoto);
         await sleep(400);
         if (form.isConnected) location.hash = `#/day/${day.id}`;
@@ -676,7 +676,7 @@ async function viewNew() {
       locate, weatherStatus,
       h('label', { class: 'check' }, weatherOn, h('span', null, ui('Указать город вручную'))),
       city),
-    h('div', { class: 'field' }, visibility.label),
+    visibility.element,
     h('div', { class: 'row' }, submit, h('a', { class: 'btn ghost', href: '#/' }, ui('Отмена'))),
     steps);
 
