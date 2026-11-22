@@ -16,6 +16,9 @@ import { memoryGallery, scenery, setScenery, animateScenery } from './gallery.js
 import { archiveAlbum } from './archive.js';
 import { openSettings } from './preferences.js';
 import { photoTrackPicker } from './photo-track-picker.js';
+import { cloudSetVisibility, cloudSharedDay } from './cloud-days.js';
+import { visibilityOf } from './day-sharing.js';
+import { visibilityPicker } from './day-visibility.js';
 import { localized, setAttribute as setUiAttribute, setText, translate, ui, uiDate, uiTextNode } from './i18n.js';
 
 const view = document.getElementById('view');
@@ -137,6 +140,7 @@ async function buildDay(input, step = () => {}, preparePhoto = processPhoto) {
   if (theme.motion === 'snow' && !ambient.includes('wind')) ambient.push('wind');
   const day = {
     id: uid(), created: Date.now(), date: input.date, text: input.text, photos, song,
+    visibility: visibilityOf(input.visibility),
     ...(input.demoKey ? { demoKey: input.demoKey, demoVersion: DEMO_VERSION } : {}),
     inputs: { text: ta, music, weather },
     meta: { title: ta.title, caption: ta.caption, sensory: ta.sensory, ambient: ambient.slice(0, 2) },
@@ -290,6 +294,8 @@ async function route() {
   });
   try {
     if (hash === '#/account' && !account) view.replaceChildren(loginForm('#/'));
+    else if (hash.startsWith('#/friends/') && !account) view.replaceChildren(loginForm(hash));
+    else if (hash.startsWith('#/friends/day/')) await viewDay(hash.slice(14), current, true);
     else if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
     else if (hash === '#/new' && !account) view.replaceChildren(loginForm('#/new'));
     else if (hash === '#/new') await viewNew();
@@ -597,6 +603,7 @@ async function viewNew() {
   refreshStudio();
 
   const steps = h('ol', { class: 'steps', 'aria-live': 'polite' });
+  const visibility = visibilityPicker('atmosphere');
   const submit = h('button', { class: 'btn primary big', type: 'submit' }, ui('Собрать воспоминание'));
 
   const form = h('form', {
@@ -621,6 +628,7 @@ async function viewNew() {
           songQuery: query.value.trim(), songFile: songFile.files[0] || null, photoSong: picker.selected,
           weatherCity: weatherOn.checked ? city.value.trim() : '',
           weather: dayWeather?.date === (date.value || todayISO()) ? dayWeather : null,
+          visibility: visibility.select.value,
         }, step, preparePhoto);
         await sleep(400);
         if (form.isConnected) location.hash = `#/day/${day.id}`;
@@ -651,6 +659,7 @@ async function viewNew() {
       locate, weatherStatus,
       h('label', { class: 'check' }, weatherOn, h('span', null, ui('Указать город вручную'))),
       city),
+    h('div', { class: 'field' }, visibility.label),
     h('div', { class: 'row' }, submit, h('a', { class: 'btn ghost', href: '#/' }, ui('Отмена'))),
     steps);
 
@@ -704,12 +713,17 @@ function photoViewer(photos) {
   return () => { select(0); dialog.showModal(); };
 }
 
-async function viewDay(id, current) {
-  const stored = await getDay(id);
+async function viewDay(id, current, readOnly = false) {
+  const stored = await (readOnly ? cloudSharedDay(id) : getDay(id));
   if (!current()) return;
+  if (!stored && readOnly) {
+    view.replaceChildren(h('section', { class: 'wrap' }, h('h1', { class: 'h1' }, ui('Этот день недоступен')),
+      h('a', { class: 'btn', href: '#/friends/feed' }, ui('Атмосфера друзей'))));
+    return;
+  }
   if (!stored) { location.hash = '#/archive'; return; }
-  const day = await upgradeDemo(stored);
-  const list = (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
+  const day = readOnly ? stored : await upgradeDemo(stored);
+  const list = readOnly ? [] : (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
   if (!current()) return;
   const idx = list.findIndex(d => d.id === id), prev = list[idx - 1], next = list[idx + 1];
   const title = entryTitle(day);
@@ -732,7 +746,7 @@ async function viewDay(id, current) {
     renderer.dispose();
     return;
   }
-  const openPhotos = photoViewer(day.photos);
+  const openPhotos = readOnly ? null : photoViewer(day.photos);
   const sound = getSound();
   let playing = false, speaking = false, recording = false, t0 = performance.now(), buf = null, lastVideo = null;
   const audioWork = new AbortController();
@@ -766,6 +780,10 @@ async function viewDay(id, current) {
       }
       signal.throwIfAborted();
       if (!buf) {
+        if (readOnly) {
+          setText(songNote, ui('Фрагмент песни недоступен.'));
+          return false;
+        }
         setText(songNote, ui('Ищу доступную музыку по фото…'));
         const { song, music } = await findMusicForPhotos(aggregatePhotos(day.photos), signal);
         const originalLink = day.song?.originalLink || (!day.song?.autoPicked && (day.song?.link || day.song?.meta?.trackViewUrl));
@@ -951,6 +969,19 @@ async function viewDay(id, current) {
   }, ui('Оформление'));
   const songCaption = h('p', { class: 'day-track' });
   const musicCredits = h('div', { class: 'day-menu-credits', hidden: true });
+  const visibility = !readOnly && account && day._record && visibilityPicker(day.visibility, async event => {
+    const select = event.target;
+    select.disabled = true;
+    try {
+      await cloudSetVisibility(day, select.value);
+      toast(ui('Видимость обновлена.'));
+    } catch (error) {
+      select.value = day.visibility;
+      toast(ui(error.message), 'error');
+    } finally {
+      select.disabled = false;
+    }
+  });
   const moreSummary = h('summary', { class: 'btn day-more-trigger', 'aria-label': ui('Ещё') }, '⋯');
   const menu = h('div', { class: 'day-menu-panel' },
     voiceBtn,
@@ -959,10 +990,12 @@ async function viewDay(id, current) {
     (prev || next) && h('nav', { class: 'day-menu-neighbors', 'aria-label': ui('Соседние дни') },
       prev && h('a', { class: 'day-menu-item', href: `#/day/${prev.id}`, title: entryTitle(prev) }, ui('‹ Раньше')),
       next && h('a', { class: 'day-menu-item', href: `#/day/${next.id}`, title: entryTitle(next) }, ui('Позже ›'))),
-    musicCredits, delBtn);
+    visibility && visibility.label, musicCredits, delBtn);
   const more = h('details', { class: 'day-more' }, moreSummary, menu);
-  heading.append(h('div', { class: 'day-actions' }, playBtn, more), songCaption, songNote, recNote);
-  reading.append(design);
+  heading.append(h('div', { class: 'day-actions' }, playBtn,
+    readOnly ? h('a', { class: 'btn', href: '#/friends/feed' }, ui('Атмосфера друзей')) : more),
+  songCaption, songNote, recNote);
+  if (!readOnly) reading.append(design);
 
   function showDesign(open) {
     design.hidden = !open;
@@ -1035,7 +1068,7 @@ async function viewDay(id, current) {
     if (e.key === ' ') { e.preventDefault(); playing ? stop() : start(); }
     else if (e.key === 'ArrowLeft' && prev) location.hash = `#/day/${prev.id}`;
     else if (e.key === 'ArrowRight' && next) location.hash = `#/day/${next.id}`;
-    else if (e.key === 'Escape') location.hash = '#/archive';
+    else if (e.key === 'Escape') location.hash = readOnly ? '#/friends/feed' : '#/archive';
   };
   document.addEventListener('keydown', onKey);
   const onVis = () => { if (document.hidden && playing && !recording) stop(); };

@@ -1,24 +1,10 @@
 import { h, plural, TIME_RU, SEASON_RU } from './util.js';
-import { TECH, TECH_ORDER } from './mood.js';
+import { MOOD_LABELS as moods, moodOf, TECH, TECH_ORDER } from './mood.js';
 import { motionEnabled, watchMotion } from './preferences.js';
 import { localized, setText, translate, ui, uiDate } from './i18n.js';
 import { entryTitle } from './demo.js';
 
 const daysPerSpread = 4;
-const moods = {
-  bright: 'Радость', quiet: 'Спокойствие', nostalgia: 'Ностальгия',
-  blue: 'Грусть', tense: 'Напряжение', lively: 'Драйв',
-};
-
-function moodOf(mood) {
-  if (!mood) return '';
-  if (mood.T > .48) return 'tense';
-  if (mood.V < -.18) return 'blue';
-  if (mood.E > .59) return 'lively';
-  if (mood.N > .28) return 'nostalgia';
-  if (mood.V > .24) return 'bright';
-  return 'quiet';
-}
 
 const monthLabel = date => uiDate(date.slice(0, 7) + '-01', {
   month: 'long', year: 'numeric',

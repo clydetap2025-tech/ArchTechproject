@@ -508,6 +508,9 @@ input[type=file] { font-size: 14px; max-width: 100%; }
 .day-design-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .day-design-heading .h2 { margin: 0; }
 .day-design .pad { height: 136px; }
+.visibility-picker, .field > .visibility-picker { display: grid; gap: 6px; font-size: 14px; }
+.visibility-picker > select { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+.day-menu-panel .visibility-picker { margin: 5px 7px; padding-top: 8px; border-top: 1px solid var(--rule); }
 .day-why { margin-top: 16px; border-top: 1px solid var(--rule); padding-top: 12px; }
 .day-why > summary { font-size: 14px; cursor: pointer; }
 .dialog.photo-dialog { max-width: min(92vw, 900px); width: max-content; padding: 12px; }
