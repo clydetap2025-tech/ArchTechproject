@@ -164,3 +164,17 @@ export function computeDay(day, override = day.override) {
 
   return { mood, weights: w, scores, primary, secondary, style: st, recipe, voice, photo: P };
 }
+export const MOOD_LABELS = {
+  bright: 'Радость', quiet: 'Спокойствие', nostalgia: 'Ностальгия',
+  blue: 'Грусть', tense: 'Напряжение', lively: 'Драйв',
+};
+
+export function moodOf(mood) {
+  if (!mood) return '';
+  if (mood.T > .48) return 'tense';
+  if (mood.V < -.18) return 'blue';
+  if (mood.E > .59) return 'lively';
+  if (mood.N > .28) return 'nostalgia';
+  if (mood.V > .24) return 'bright';
+  return 'quiet';
+}

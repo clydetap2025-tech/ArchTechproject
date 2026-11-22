@@ -16,5 +16,6 @@ if (!(Test-Path -LiteralPath $exe)) {
 }
 $data = Join-Path $storage 'data'
 $migrations = Join-Path $PSScriptRoot 'pb_migrations'
-$parameters = @('serve', "--http=127.0.0.1:$Port", "--dir=`"$data`"", "--migrationsDir=`"$migrations`"", '--automigrate=false', "--origins=http://localhost:$WebPort,http://127.0.0.1:$WebPort")
+$hooks = Join-Path $PSScriptRoot 'pb_hooks'
+$parameters = @('serve', "--http=127.0.0.1:$Port", "--dir=`"$data`"", "--migrationsDir=`"$migrations`"", "--hooksDir=`"$hooks`"", '--automigrate=false', "--origins=http://localhost:$WebPort,http://127.0.0.1:$WebPort")
 Start-Process -FilePath $exe -ArgumentList $parameters -WorkingDirectory $storage -WindowStyle Hidden

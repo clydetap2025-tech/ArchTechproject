@@ -16,6 +16,11 @@ import { memoryGallery, scenery, setScenery, animateScenery } from './gallery.js
 import { archiveAlbum } from './archive.js';
 import { openSettings } from './preferences.js';
 import { photoTrackPicker } from './photo-track-picker.js';
+import { cloudSetVisibility, cloudSharedDay } from './cloud-days.js';
+import { visibilityOf } from './day-sharing.js';
+import { newDayVisibility, visibilityPicker } from './day-visibility.js';
+import { friendsFeed, friendsPage, invitationPage, listFriends } from './friends.js';
+import { loadWarmth } from './warmth.js';
 import { localized, setAttribute as setUiAttribute, setText, translate, ui, uiDate, uiTextNode } from './i18n.js';
 
 const view = document.getElementById('view');
@@ -137,6 +142,7 @@ async function buildDay(input, step = () => {}, preparePhoto = processPhoto) {
   if (theme.motion === 'snow' && !ambient.includes('wind')) ambient.push('wind');
   const day = {
     id: uid(), created: Date.now(), date: input.date, text: input.text, photos, song,
+    visibility: visibilityOf(input.visibility),
     ...(input.demoKey ? { demoKey: input.demoKey, demoVersion: DEMO_VERSION } : {}),
     inputs: { text: ta, music, weather },
     meta: { title: ta.title, caption: ta.caption, sensory: ta.sensory, ambient: ambient.slice(0, 2) },
@@ -241,7 +247,15 @@ function mountAccountMenu() {
       h('p', { class: 'account-email' }, account.email),
       h('div', { class: 'account-menu-group' }, archive, settings, contact, move, status),
       h('div', { class: 'account-menu-group' }, logout)));
-  document.getElementById('account-link').replaceWith(menu);
+  const accountLink = document.getElementById('account-link');
+  const friendsLink = h('a', { class: 'nav-friends', href: '#/friends', 'data-nav': true,
+    'aria-label': ui('Друзья'), title: ui('Друзья'),
+    html: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="8.5" cy="6.5" r="3.5"/><circle cx="18" cy="8" r="3"/>
+      <path d="M1 20a7.5 7.5 0 0 1 15 0H1Zm16.5 0a9 9 0 0 0-2.3-6 5.8 5.8 0 0 1 8 6h-5.7Z"/>
+    </svg>` });
+  accountLink.parentElement.prepend(friendsLink);
+  accountLink.replaceWith(menu);
   menu.addEventListener('toggle', async () => {
     if (!menu.open || checking || previous) return;
     checking = true;
@@ -290,6 +304,21 @@ async function route() {
   });
   try {
     if (hash === '#/account' && !account) view.replaceChildren(loginForm('#/'));
+    else if ((hash === '#/friends' || hash.startsWith('#/friends/')) && !account) view.replaceChildren(loginForm(hash));
+    else if (hash.startsWith('#/friends/join/')) {
+      view.replaceChildren(invitationPage(hash.slice(15), name => {
+        toast(ui('Теперь вы друзья с {name}.', { name }));
+        location.hash = '#/friends';
+      }));
+    }
+    else if (hash === '#/friends' || hash === '#/friends/feed') {
+      view.replaceChildren(h('p', { class: 'wrap muted', role: 'status' }, ui('Открываю друзей…')));
+      const friends = await listFriends();
+      if (!current()) return;
+      const page = hash.endsWith('/feed') ? await friendsFeed(friends) : friendsPage(friends);
+      if (current()) view.replaceChildren(page);
+    }
+    else if (hash.startsWith('#/friends/day/')) await viewDay(hash.slice(14), current, true);
     else if (hash.startsWith('#/day/')) await viewDay(decodeURIComponent(hash.slice(6)), current);
     else if (hash === '#/new' && !account) view.replaceChildren(loginForm('#/new'));
     else if (hash === '#/new') await viewNew();
@@ -597,6 +626,7 @@ async function viewNew() {
   refreshStudio();
 
   const steps = h('ol', { class: 'steps', 'aria-live': 'polite' });
+  const visibility = newDayVisibility();
   const submit = h('button', { class: 'btn primary big', type: 'submit' }, ui('Собрать воспоминание'));
 
   const form = h('form', {
@@ -621,6 +651,7 @@ async function viewNew() {
           songQuery: query.value.trim(), songFile: songFile.files[0] || null, photoSong: picker.selected,
           weatherCity: weatherOn.checked ? city.value.trim() : '',
           weather: dayWeather?.date === (date.value || todayISO()) ? dayWeather : null,
+          visibility: visibility.value,
         }, step, preparePhoto);
         await sleep(400);
         if (form.isConnected) location.hash = `#/day/${day.id}`;
@@ -651,6 +682,7 @@ async function viewNew() {
       locate, weatherStatus,
       h('label', { class: 'check' }, weatherOn, h('span', null, ui('Указать город вручную'))),
       city),
+    visibility.element,
     h('div', { class: 'row' }, submit, h('a', { class: 'btn ghost', href: '#/' }, ui('Отмена'))),
     steps);
 
@@ -704,12 +736,17 @@ function photoViewer(photos) {
   return () => { select(0); dialog.showModal(); };
 }
 
-async function viewDay(id, current) {
-  const stored = await getDay(id);
+async function viewDay(id, current, readOnly = false) {
+  const stored = await (readOnly ? cloudSharedDay(id) : getDay(id));
   if (!current()) return;
+  if (!stored && readOnly) {
+    view.replaceChildren(h('section', { class: 'wrap' }, h('h1', { class: 'h1' }, ui('Этот день недоступен')),
+      h('a', { class: 'btn', href: '#/friends/feed' }, ui('Атмосфера друзей'))));
+    return;
+  }
   if (!stored) { location.hash = '#/archive'; return; }
-  const day = await upgradeDemo(stored);
-  const list = (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
+  const day = readOnly ? stored : await upgradeDemo(stored);
+  const list = readOnly ? [] : (await allDays()).sort((a, b) => a.date.localeCompare(b.date) || a.created - b.created);
   if (!current()) return;
   const idx = list.findIndex(d => d.id === id), prev = list[idx - 1], next = list[idx + 1];
   const title = entryTitle(day);
@@ -720,6 +757,9 @@ async function viewDay(id, current) {
   const flip = h('div', { class: 'flip', role: 'button', tabindex: '0', 'aria-label': ui('Перевернуть карточку'), 'aria-pressed': 'false' },
     h('div', { class: 'flip-inner' }, canvas, back));
   const stage = h('div', { class: 'stage' }, flip);
+  const warmth = !readOnly && account && day._record &&
+    h('section', { class: 'day-warmth', 'aria-labelledby': 'day-warmth-title', hidden: true });
+  if (warmth) stage.append(warmth);
   const heading = h('header', { class: 'day-heading' },
     h('time', { class: 'day-date', datetime: day.date }, uiDate(day.date)),
     h('h1', { class: 'day-title', id: 'day-title' }, title));
@@ -732,7 +772,7 @@ async function viewDay(id, current) {
     renderer.dispose();
     return;
   }
-  const openPhotos = photoViewer(day.photos);
+  const openPhotos = readOnly ? null : photoViewer(day.photos);
   const sound = getSound();
   let playing = false, speaking = false, recording = false, t0 = performance.now(), buf = null, lastVideo = null;
   const audioWork = new AbortController();
@@ -766,6 +806,15 @@ async function viewDay(id, current) {
       }
       signal.throwIfAborted();
       if (!buf) {
+        if (readOnly) {
+          sound.stopAll();
+          sound.startSketch(day.inputs.music, renderer.D);
+          sound.startAmbient(day.meta.ambient);
+          playing = true;
+          updatePlay();
+          setText(songNote, ui('Фрагмент недоступен. Звучит эскиз в том же темпе.'));
+          return true;
+        }
         setText(songNote, ui('Ищу доступную музыку по фото…'));
         const { song, music } = await findMusicForPhotos(aggregatePhotos(day.photos), signal);
         const originalLink = day.song?.originalLink || (!day.song?.autoPicked && (day.song?.link || day.song?.meta?.trackViewUrl));
@@ -824,6 +873,11 @@ async function viewDay(id, current) {
   flip.addEventListener('click', () => {
     const backVisible = flip.classList.toggle('is-flipped');
     flip.setAttribute('aria-pressed', String(backVisible));
+    if (!warmth) return;
+    warmth.hidden = true;
+    if (backVisible) loadWarmth(day._record.id, warmth).then(hasHeat => {
+      if (current() && flip.classList.contains('is-flipped')) warmth.hidden = !hasHeat;
+    }).catch(() => {});
   });
   flip.addEventListener('keydown', event => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -951,6 +1005,19 @@ async function viewDay(id, current) {
   }, ui('Оформление'));
   const songCaption = h('p', { class: 'day-track' });
   const musicCredits = h('div', { class: 'day-menu-credits', hidden: true });
+  const visibility = !readOnly && account && day._record && visibilityPicker(day.visibility, async event => {
+    const select = event.target;
+    select.disabled = true;
+    try {
+      await cloudSetVisibility(day, select.value);
+      toast(ui('Видимость обновлена.'));
+    } catch (error) {
+      select.value = day.visibility;
+      toast(ui(error.message), 'error');
+    } finally {
+      select.disabled = false;
+    }
+  });
   const moreSummary = h('summary', { class: 'btn day-more-trigger', 'aria-label': ui('Ещё') }, '⋯');
   const menu = h('div', { class: 'day-menu-panel' },
     voiceBtn,
@@ -959,10 +1026,12 @@ async function viewDay(id, current) {
     (prev || next) && h('nav', { class: 'day-menu-neighbors', 'aria-label': ui('Соседние дни') },
       prev && h('a', { class: 'day-menu-item', href: `#/day/${prev.id}`, title: entryTitle(prev) }, ui('‹ Раньше')),
       next && h('a', { class: 'day-menu-item', href: `#/day/${next.id}`, title: entryTitle(next) }, ui('Позже ›'))),
-    musicCredits, delBtn);
+    visibility && visibility.label, musicCredits, delBtn);
   const more = h('details', { class: 'day-more' }, moreSummary, menu);
-  heading.append(h('div', { class: 'day-actions' }, playBtn, more), songCaption, songNote, recNote);
-  reading.append(design);
+  heading.append(h('div', { class: 'day-actions' }, playBtn,
+    readOnly ? h('a', { class: 'btn', href: '#/friends/feed' }, ui('Атмосфера друзей')) : more),
+  songCaption, songNote, recNote);
+  if (!readOnly) reading.append(design);
 
   function showDesign(open) {
     design.hidden = !open;
@@ -1035,7 +1104,7 @@ async function viewDay(id, current) {
     if (e.key === ' ') { e.preventDefault(); playing ? stop() : start(); }
     else if (e.key === 'ArrowLeft' && prev) location.hash = `#/day/${prev.id}`;
     else if (e.key === 'ArrowRight' && next) location.hash = `#/day/${next.id}`;
-    else if (e.key === 'Escape') location.hash = '#/archive';
+    else if (e.key === 'Escape') location.hash = readOnly ? '#/friends/feed' : '#/archive';
   };
   document.addEventListener('keydown', onKey);
   const onVis = () => { if (document.hidden && playing && !recording) stop(); };
