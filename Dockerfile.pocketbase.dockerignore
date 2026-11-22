@@ -1,0 +1,6 @@
+*
+!Dockerfile.pocketbase
+!pb_migrations/
+!pb_migrations/**
+!pb_hooks/
+!pb_hooks/**
